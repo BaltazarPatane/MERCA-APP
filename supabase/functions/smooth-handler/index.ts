@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 /*
-MERCA · receptor de comprobantes · v12
+MERCA · receptor de comprobantes · v13
 Receptor multiusuario + asociación automática de la billetera de origen.
 
 - Mantener la URL, el token y el JSON del Atajo existente.
@@ -15,7 +15,7 @@ Receptor multiusuario + asociación automática de la billetera de origen.
 - Mantener la configuración y los secretos multiusuario existentes en Supabase.
 */
 
-// MERCA - receptor HTTPS v11 multiusuario. Todo comprobante compartido desde Atajos es GASTO.
+// MERCA - receptor HTTPS v13 multiusuario. Todo comprobante compartido desde Atajos es GASTO.
 // Los INGRESOS se agregan manualmente desde la aplicación web.
 // No se pide «tipo» ni se usa el titular para clasificar el gasto.
 // Si el nombre de destino falta, se guarda su alias o identificador reconocido.
@@ -33,19 +33,26 @@ function buscarMontos(texto: string): string[] {
     .map(m => m[0].trim()))].slice(0, 15);
 }
 
-function esFormatoPagoMP(texto: string): boolean {
+// Los centavos aplanados son una característica del PDF de Mercado Pago,
+// independiente de que el OCR haya capturado el número de operación.
+function esPlantillaMontoMercadoPago(texto: string): boolean {
   const cuerpo = textoOperacion(texto);
   return /\bcomprobante\s+de\s+(?:pago|transferencia)\b/i.test(cuerpo) &&
     /\borigen\s+y\s+destino\b/i.test(cuerpo) &&
-    /\bmercado\s+pago\b/i.test(cuerpo) && Boolean(buscarReferencia(texto));
+    /\bmercado\s+pago\b/i.test(cuerpo);
+}
+function esFormatoPagoMP(texto: string): boolean {
+  return esPlantillaMontoMercadoPago(texto) && Boolean(buscarReferencia(texto));
 }
 
 function normalizarMonto(valor: string, textoCompleto: string): string | null {
   let numero = valor.replace(/^(?:AR\$|ARS|\$)\s*/i, "").trim();
   // PDF: la cifra entera se dibuja grande y los centavos a su derecha,
   // en una fuente menor. El texto extraído NO incluye coma: "17.50000".
-  // SOLO se reconstruye en comprobantes MP cuyo formato está identificado.
-  if (esFormatoPagoMP(textoCompleto)) {
+  // Los centavos en superíndice son explícitos y se pueden reconstruir.
+  // Los centavos unidos a miles con punto requieren reconocer la plantilla MP,
+  // pero no necesariamente el número de operación.
+  if (esPlantillaMontoMercadoPago(textoCompleto)) {
     const superfijos = "⁰¹²³⁴⁵⁶⁷⁸⁹";
     const superscript = numero.match(/^(\d{1,3}(?:\.\d{3})+|\d+)([⁰¹²³⁴⁵⁶⁷⁸⁹]{2})$/);
     if (superscript) {
@@ -64,6 +71,16 @@ function normalizarMonto(valor: string, textoCompleto: string): string | null {
   const limpio = entero.replace(/\./g, "").replace(/^0+(?=\d)/, "");
   if (limpio.length > 13 || !/[1-9]/.test(limpio + decimales)) return null;
   return `${limpio}.${decimales.padEnd(2, "0")}`;
+}
+
+// Logs por patrones, sin registrar importe, comprobante o datos bancarios.
+function clasificarFormatoImporte(valor: string, texto: string): string {
+  const numero = valor.replace(/^(?:AR\$|ARS|\$)\s*/i, "").trim();
+  if (/^\d{3,}$/.test(numero)) return "SIN_SEPARADOR_AMBIGUO";
+  if (/^\d{1,3}(?:\.\d{3})+\d{2}$/.test(numero))
+    return esPlantillaMontoMercadoPago(texto) ? "MILES_CENTAVOS_UNIDOS" : "MILES_CENTAVOS_SIN_PLANTILLA";
+  if (/[⁰¹²³⁴⁵⁶⁷⁸⁹]/.test(numero)) return "CENTAVOS_SUPERINDICE_NO_VALIDOS";
+  return "FORMATO_NO_RECONOCIDO";
 }
 
 function buscarFechas(texto: string): string[] {
@@ -494,8 +511,11 @@ Deno.serve(async (req: Request) => {
   // Sin importe o fecha confiable NO se guarda un registro con cifras inventadas.
   // Solo se registran códigos de diagnóstico (no valores privados del comprobante).
   if (!monto || !fecha) {
+    const formatoImporte = !monto && posiblesMontos.length === 1
+      ? clasificarFormatoImporte(posiblesMontos[0], textoComprobante) : "SIN_IMPORTe_UNICO";
     console.warn("MERCA_VALIDACION", !monto ? "MONTO_AMBIGUO_O_INVALIDO" : "FECHA_AMBIGUA_O_INVALIDA",
-      "montos_encontrados", posiblesMontos.length, "fechas_encontradas", posiblesFechas.length);
+      "montos_encontrados", posiblesMontos.length, "fechas_encontradas", posiblesFechas.length,
+      "patron_importe", formatoImporte);
     return responder("error", 422);
   }
 

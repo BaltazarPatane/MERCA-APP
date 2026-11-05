@@ -315,7 +315,7 @@ a la función HTTPS `smooth-handler`. La autenticación se realiza mediante el e
 
 Los **secretos administrativos, el token del atajo y cualquier clave de servicio** no deben incorporarse al frontend ni subirse a GitHub.
 
-El código de la Edge Function utilizada en el despliegue del proyecto se administró y publicó **por separado desde Supabase**; la documentación histórica de su integración se encuentra en [`docs/comprobantes.md`](docs/comprobantes.md). No se debe confundir el despliegue de Cloudflare Pages con el de la función.
+El receptor multiusuario versionado se encuentra en [`supabase/functions/smooth-handler/index.ts`](supabase/functions/smooth-handler/index.ts). Su despliegue se hace **por separado en Supabase**; GitHub y Cloudflare Pages no actualizan automáticamente la función. Consultar [`docs/comprobantes.md`](docs/comprobantes.md).
 
 ## Seguridad y privacidad
 
@@ -328,7 +328,7 @@ MERCA se diseñó para mantener **público el código** sin publicar los datos p
 - Se evita guardar archivos originales y texto OCR completo.
 - El identificador de operación permite detectar reenvíos y reducir la posibilidad de duplicados.
 
-El endpoint de ingesta desde Atajos está configurado para un **usuario propietario**. Crear usuarios adicionales en Supabase no configura automáticamente un atajo independiente para cada uno.
+La función admite varios usuarios mediante tokens privados independientes. Crear usuarios adicionales en Supabase no configura automáticamente sus Atajos ni la verificación del CUIL emisor para la billetera.
 
 ## Evolución del desarrollo
 
@@ -387,13 +387,13 @@ MERCA-APP/
 
 La versión actual cubre el flujo de **gastos enviados desde iPhone** y la administración de finanzas desde la web, pero conserva algunos límites importantes:
 
-- El reconocimiento automático está validado para **determinados formatos de comprobantes**, no para cualquier PDF bancario.
+- El reconocimiento automático está validado para **determinados formatos de comprobantes**, no para cualquier PDF bancario; la asociación automática de billetera se limita por ahora al formato de origen Mercado Pago verificado.
 - Si el importe, fecha o estructura son ambiguos, el sistema puede requerir revisión o rechazar la solicitud.
 - La exportación CSV utiliza el historial cargado por páginas desde Supabase; **no equivale a un respaldo integral de PostgreSQL**.
 - No hay restauración automatizada de respaldos; la carga de movimientos sí utiliza paginación.
 - Inversiones registra **aportes**, no valor de mercado, ganancias, dividendos, rentabilidad o rescates automáticos.
 - El balance del período es un flujo. El dinero total disponible incluye saldos de apertura y movimientos confirmados, pero **no está sincronizado automáticamente con bancos**.
-- Las billeteras se administran manualmente; los comprobantes enviados desde Atajos se conservan sin billetera hasta que el usuario la asigne.
+- Las billeteras se administran manualmente; tras publicar `smooth-handler` v10, los comprobantes compatibles de Mercado Pago pueden asignarse automáticamente si coinciden el CUIL privado, el origen y una única cuenta activa del usuario. Los demás siguen Sin asignar.
 - Para activar **Inversiones** en una base de datos existente es necesario ejecutar [la migración SQL](supabase/migrations/20261020_inversiones.sql), que amplía los tipos permitidos sin borrar registros. **No se ejecuta automáticamente desde GitHub ni Cloudflare.**
 - El frontend se despliega desde GitHub, pero la ingesta de comprobantes requiere desplegar y configurar la Edge Function de manera independiente.
 

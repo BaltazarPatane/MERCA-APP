@@ -17,6 +17,7 @@ export default function InversionesPanel({movimientos,categorias,cuentas,busy,on
   const [desde,setDesde]=useState(hoy());
   const [hasta,setHasta]=useState(hoy());
   const [categoriaId,setCategoriaId]=useState("todas");
+  const [cuentaId,setCuentaId]=useState("todas");
   const [estado,setEstado]=useState("todos");
   const [buscar,setBuscar]=useState("");
   const inversiones=useMemo(()=>movimientos.filter(m=>m.tipo==="inversion"),[movimientos]);
@@ -25,10 +26,12 @@ export default function InversionesPanel({movimientos,categorias,cuentas,busy,on
     if(periodo==="mes"&&!m.fecha.startsWith(mes))return false;
     if(periodo==="rango"&&(m.fecha<desde||m.fecha>hasta))return false;
     if(categoriaId!=="todas"&&m.categoria_id!==categoriaId)return false;
+    if(cuentaId==="sin_asignar"&&m.cuenta_origen_id)return false;
+    if(cuentaId!=="todas"&&cuentaId!=="sin_asignar"&&m.cuenta_origen_id!==cuentaId)return false;
     if(estado!=="todos"&&m.estado!==estado)return false;
     if(buscar.trim()&&!((m.destinatario||"")+" "+(m.descripcion||"")).toLocaleLowerCase("es").includes(buscar.toLocaleLowerCase("es").trim()))return false;
     return true;
-  }),[inversiones,periodo,mes,desde,hasta,categoriaId,estado,buscar]);
+  }),[inversiones,periodo,mes,desde,hasta,categoriaId,cuentaId,estado,buscar]);
   const confirmadas=filtradas.filter(m=>m.estado==="confirmado");
   const capital=resumenFinanciero(filtradas).inversiones;
   const acumulado=resumenFinanciero(inversiones).inversiones;
@@ -42,7 +45,7 @@ export default function InversionesPanel({movimientos,categorias,cuentas,busy,on
       mapa.set(categoria,(mapa.get(categoria)||0)+Number(m.monto));
     });
     return [...mapa.entries()].sort((a,b)=>b[1]-a[1]);
-  },[movimientos,periodo,mes,desde,hasta,categoriaId,estado,buscar,categorias]);
+  },[movimientos,periodo,mes,desde,hasta,categoriaId,cuentaId,estado,buscar,categorias]);
 
   return <div className="investV1">
     <div className="investV1-toolbar">
@@ -55,12 +58,13 @@ export default function InversionesPanel({movimientos,categorias,cuentas,busy,on
       <article><span>Operaciones del período</span><strong>{filtradas.length}</strong><small>{pendientes} pendientes de revisión</small></article>
     </div>
     <section className="investV1-filterbox" aria-label="Filtros de inversiones">
-      <div className="investV1-filterhead"><h3><CalendarDays size={18}/> Filtrar inversiones</h3><button type="button" onClick={()=>{setPeriodo("mes");setMes(hoy().slice(0,7));setDesde(hoy());setHasta(hoy());setCategoriaId("todas");setEstado("todos");setBuscar("");}}>Restablecer</button></div>
+      <div className="investV1-filterhead"><h3><CalendarDays size={18}/> Filtrar inversiones</h3><button type="button" onClick={()=>{setPeriodo("mes");setMes(hoy().slice(0,7));setDesde(hoy());setHasta(hoy());setCategoriaId("todas");setCuentaId("todas");setEstado("todos");setBuscar("");}}>Restablecer</button></div>
       <div className="investV1-filters">
         <label>Período<select value={periodo} onChange={e=>setPeriodo(e.target.value)}><option value="mes">Mes</option><option value="rango">Rango</option><option value="todo">Todo el historial</option></select></label>
         {periodo==="mes"&&<label>Mes<input type="month" value={mes} onChange={e=>setMes(e.target.value)}/></label>}
         {periodo==="rango"&&<><label>Desde<input type="date" value={desde} onChange={e=>setDesde(e.target.value)}/></label><label>Hasta<input type="date" min={desde} value={hasta} onChange={e=>setHasta(e.target.value)}/></label></>}
         <label>Categoría<select value={categoriaId} onChange={e=>setCategoriaId(e.target.value)}><option value="todas">Todas</option>{categoriasInv.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></label>
+        <label>Billetera<select value={cuentaId} onChange={e=>setCuentaId(e.target.value)}><option value="todas">Todas</option><option value="sin_asignar">Sin asignar</option>{cuentas.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></label>
         <label>Estado<select value={estado} onChange={e=>setEstado(e.target.value)}><option value="todos">Todos</option><option value="confirmado">Confirmados</option><option value="pendiente_revision">Pendientes</option><option value="descartado">Descartados</option></select></label>
         <label className="investV1-search">Buscar activo o plataforma<span><Search size={16}/><input type="search" value={buscar} onChange={e=>setBuscar(e.target.value)} placeholder="Nombre o descripción"/></span></label>
       </div>
@@ -74,7 +78,7 @@ export default function InversionesPanel({movimientos,categorias,cuentas,busy,on
           <div className="investV1-itemdetails">
             <span className="investV1-itemcat">{(m.categoria_id&&mapaCategorias.get(m.categoria_id))||"Sin categoría"}</span>
             <strong>{m.destinatario||m.descripcion||"Aporte a inversión"}</strong>
-            <small>{fechaLegible(m.fecha)}{m.hora?" · "+m.hora.slice(0,5):""}{m.cuenta_origen_id?" · "+(mapaCuentas.get(m.cuenta_origen_id)||"Cuenta no disponible"):""}</small>
+            <small>{fechaLegible(m.fecha)}{m.hora?" · "+m.hora.slice(0,5):""}{m.cuenta_origen_id?" · "+(mapaCuentas.get(m.cuenta_origen_id)||"Cuenta no disponible"):" · Sin asignar"}</small>
             {m.destinatario&&m.descripcion&&<p>{m.descripcion}</p>}
             <div className="investV1-itemactions"><button type="button" disabled={busy} onClick={()=>onEditar(m)}><Pencil size={14}/> Editar</button>
               {m.estado==="pendiente_revision"&&<><button type="button" disabled={busy} onClick={()=>onCambiarEstado(m.id,"confirmado")}><Check size={14}/> Confirmar</button><button type="button" disabled={busy} onClick={()=>onCambiarEstado(m.id,"descartado")}><X size={14}/> Descartar</button></>}

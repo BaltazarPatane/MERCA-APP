@@ -40,7 +40,7 @@ function pdfMercadoPago({ cuil = CUIL, origen = "Mercado Pago", destino = "Merca
   ].join("\n");
 }
 
-function dbSimulada(cuentas = [], existente = null) {
+function dbSimulada(cuentas = [], existente = null, opciones = {}) {
   const movimientos = [];
   const categoria = {id: "cat-ejemplo", activa: true};
   const db = {
@@ -60,11 +60,17 @@ function dbSimulada(cuentas = [], existente = null) {
         },
         async upsert() { return {error: null}; },
         async insert(datos) {
+          if (tabla === "movimientos" && datos.cuenta_origen_id && opciones.errorFKCuenta) {
+            return {error:{code:"23503"}};
+          }
           if (tabla === "movimientos") movimientos.push(datos);
           return {error:null};
         },
         // Postgrest: await sobre query devuelve {data,error}.
         then(ok, fail) {
+          if (tabla === "cuentas" && opciones.errorRedCuentas) {
+            return Promise.reject(new Error("Fallo simulado de conexión")).then(ok,fail);
+          }
           const data = tabla === "cuentas" ? cuentas.filter(c =>
             filtros.every(([k,v]) => c[k] === v)) : [];
           return Promise.resolve({data, error:null}).then(ok, fail);
@@ -75,8 +81,9 @@ function dbSimulada(cuentas = [], existente = null) {
   return db;
 }
 
-function servidor({ cuentas = [], token = TOKEN, extras = {}, existente = null } = {}) {
-  const base = dbSimulada(cuentas, existente);
+function servidor({ cuentas = [], token = TOKEN, extras = {}, existente = null,
+                    errorRedCuentas = false, errorFKCuenta = false } = {}) {
+  const base = dbSimulada(cuentas, existente, {errorRedCuentas,errorFKCuenta});
   const env = {
     MERCA_INGEST_USERS: JSON.stringify({[USUARIO]: TOKEN,[AMIGO]: TOKEN_AMIGO}),
     SUPABASE_URL: "https://example.supabase.co",
@@ -91,7 +98,7 @@ function servidor({ cuentas = [], token = TOKEN, extras = {}, existente = null }
     },
     Deno: { env: {get: k => env[k]}, serve: fn => {handler = fn;} },
     Request, Response, TextEncoder, crypto: webcrypto,
-    console: {error() {}},
+    console: {error() {}, warn() {}},
   });
   vm.runInContext(js + "\n;globalThis.mercaTest = { identificarBilleteraOrigen, resolverBilleteraOrigen, buscarDestinatario };\n", contexto);
   const hooks = contexto.mercaTest;
@@ -233,4 +240,30 @@ test("errores o ausencias de billetera no impiden registrar el gasto existente",
   assert.equal(s.base.movimientos.length,1);
   assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
   assert.equal(s.base.movimientos[0].monto,"17500.00");
+});
+
+test("una excepción consultando billeteras no debe impedir guardar un comprobante", async () => {
+  const s = servidor({cuentas:[cuenta("mp")],errorRedCuentas:true});
+  const respuesta=await s.enviar(pdfMercadoPago({etiqueta:"Comprobante de transferencia"}));
+  assert.equal(respuesta.status,200);
+  assert.equal(await respuesta.text(),"Movimiento cargado exitosamente");
+  assert.equal(s.base.movimientos.length,1);
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
+});
+
+test("si la FK de billetera fue invalidada, se registra igualmente sin asignar", async () => {
+  const s=servidor({cuentas:[cuenta("mp")],errorFKCuenta:true});
+  const respuesta=await s.enviar(pdfMercadoPago());
+  assert.equal(respuesta.status,200);
+  assert.equal(s.base.movimientos.length,1);
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
+});
+
+test("fecha o monto ambiguo mantiene respuesta de error y no inserta datos", async () => {
+  const s=servidor({cuentas:[cuenta("mp")]});
+  const variasFechas=pdfMercadoPago().replace("18 de octubre de 2026","18 de octubre de 2026, fecha original 19 de octubre de 2026");
+  const respuesta=await s.enviar(variasFechas);
+  assert.equal(respuesta.status,422);
+  assert.equal(await respuesta.text(),"Error al cargar el movimiento");
+  assert.equal(s.base.movimientos.length,0);
 });

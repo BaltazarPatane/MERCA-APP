@@ -33,6 +33,7 @@ export default function EditarMovimiento({ movimiento, categorias, cuentas, busy
   const [categoriaId, setCategoriaId] = useState(movimiento.categoria_id ?? "");
   const [descripcion, setDescripcion] = useState(movimiento.descripcion ?? "");
   const [cuentaId, setCuentaId] = useState(movimiento.tipo === "ingreso" ? (movimiento.cuenta_destino_id ?? "") : (movimiento.cuenta_origen_id ?? ""));
+  const [cuentaDestinoId, setCuentaDestinoId] = useState(movimiento.cuenta_destino_id ?? "");
   const [destinatario, setDestinatario] = useState(movimiento.destinatario ?? "");
   const [estado, setEstado] = useState(movimiento.estado);
   const [errorLocal, setErrorLocal] = useState("");
@@ -59,6 +60,10 @@ export default function EditarMovimiento({ movimiento, categorias, cuentas, busy
       setErrorLocal("Elegí una categoría del tipo correspondiente.");
       return;
     }
+    if (tipo === "transferencia" && cuentaId && cuentaId === cuentaDestinoId) {
+      setErrorLocal("La billetera de origen y la de destino deben ser diferentes.");
+      return;
+    }
 
     await onSave({
       tipo,
@@ -68,10 +73,8 @@ export default function EditarMovimiento({ movimiento, categorias, cuentas, busy
       categoria_id: tipo === "transferencia" ? null : categoriaId,
       descripcion: descripcion.trim() || null,
       destinatario: tipo === "gasto" || tipo === "inversion" ? (destinatario.trim() || null) : null,
-      ...(tipo === "transferencia" ? {} : {
-        cuenta_origen_id: tipo === "ingreso" ? null : (cuentaId || null),
-        cuenta_destino_id: tipo === "ingreso" ? (cuentaId || null) : null,
-      }),
+      cuenta_origen_id: tipo === "ingreso" ? null : (cuentaId || null),
+      cuenta_destino_id: tipo === "ingreso" ? (cuentaId || null) : tipo === "transferencia" ? (cuentaDestinoId || null) : null,
       estado,
     });
   }
@@ -97,7 +100,7 @@ export default function EditarMovimiento({ movimiento, categorias, cuentas, busy
               <option value="transferencia" disabled={movimiento.tipo !== "transferencia"}>Transferencia propia</option>
             </select>
           </label>
-          {tipo === "transferencia" && <p className="muted small">Las transferencias propias no se incluyen en ingresos o gastos. La edición de cuentas de origen y destino se añadirá después.</p>}
+          {tipo === "transferencia" && <p className="muted small">Las transferencias entre billeteras propias no afectan el balance total, solo la distribución.</p>}
           <label>Importe (ARS)
             <input inputMode="decimal" required value={monto} onChange={e => setMonto(e.target.value)} />
           </label>
@@ -118,10 +121,16 @@ export default function EditarMovimiento({ movimiento, categorias, cuentas, busy
           {(tipo === "gasto" || tipo === "inversion") && <label>{tipo === "inversion" ? "Activo, instrumento o plataforma (opcional)" : "Destinatario o comercio (opcional)"}
             <input maxLength={120} value={destinatario} onChange={e => setDestinatario(e.target.value)} placeholder="Ej. Grido" />
           </label>}
-          {tipo !== "transferencia" && cuentas.length > 0 && <label>{tipo === "ingreso" ? "Cuenta de destino" : "Cuenta de origen"} (opcional)
+          {cuentas.length > 0 && <label>{tipo === "ingreso" ? "Billetera de destino" : "Billetera de origen"} (opcional)
             <select value={cuentaId} onChange={e => setCuentaId(e.target.value)}>
               <option value="">Sin asignar</option>
               {cuentas.filter(c => c.activa !== false || c.id === cuentaId).map(c => <option key={c.id} value={c.id}>{c.nombre}{c.activa === false ? " (inactiva)" : ""}</option>)}
+            </select>
+          </label>}
+          {tipo === "transferencia" && cuentas.length > 0 && <label>Billetera de destino (opcional para movimientos antiguos)
+            <select value={cuentaDestinoId} onChange={e => setCuentaDestinoId(e.target.value)}>
+              <option value="">Sin asignar</option>
+              {cuentas.filter(c => c.activa !== false || c.id === cuentaDestinoId).map(c => <option key={c.id} value={c.id}>{c.nombre}{c.activa === false ? " (inactiva)" : ""}</option>)}
             </select>
           </label>}
           <label>Descripción

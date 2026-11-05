@@ -45,9 +45,14 @@ export function resumenPorCuentas(cuentas: readonly Cuenta[], movimientos: reado
 export function saldoInicialParaBD(valor: string): string | null {
   const texto = valor.trim().replace(/\s/g, "");
   if (!texto) return "0.00";
-  if (!/^(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?$/.test(texto) &&
-      !/^\d+(?:\.\d{1,2})?$/.test(texto)) return null;
-  const partes = texto.includes(",") ? texto.replace(/\./g, "").split(",") : texto.split(".");
+  const formatoArgentino = /^(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?$/;
+  const formatoDecimalPunto = /^\d+(?:\.\d{1,2})?$/;
+  let partes: string[];
+  if (formatoArgentino.test(texto)) {
+    partes = texto.replace(/\./g, "").split(",");
+  } else if (formatoDecimalPunto.test(texto)) {
+    partes = texto.split(".");
+  } else return null;
   const entero = partes[0].replace(/^0+(?=\d)/, "");
   if (entero.length > 13) return null;
   return entero + "." + (partes[1] ?? "").padEnd(2, "0");

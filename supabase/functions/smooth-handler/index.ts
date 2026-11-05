@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 /*
-MERCA · smooth-handler · v11
+MERCA · receptor de comprobantes · v12
 Receptor multiusuario + asociación automática de la billetera de origen.
 
 - Mantener la URL, el token y el JSON del Atajo existente.
@@ -305,19 +305,25 @@ function nombreBilleteraNormalizado(nombre: string): string {
 async function resolverBilleteraOrigen(
   db: ReturnType<typeof createClient>, usuario: string, comprobante: string
 ): Promise<string | null> {
-  const entidadOrigen = identificarBilleteraOrigen(comprobante);
-  if (!entidadOrigen) return null;
-
-  const { data, error } = await db.from("cuentas")
-    .select("id,nombre,activa").eq("user_id", usuario);
-  if (error || !data) return null;
-  const normalizado = nombreBilleteraNormalizado(entidadOrigen);
-  const coincidencias = data.filter(c =>
-    typeof c.nombre === "string" && nombreBilleteraNormalizado(c.nombre) === normalizado
-  );
-  // Dos billeteras con el mismo nombre o cuenta inactiva: asignación ambigua.
-  if (coincidencias.length !== 1 || coincidencias[0].activa !== true) return null;
-  return coincidencias[0].id;
+  // La billetera es un dato opcional: incluso si falla el reconocimiento
+  // o la consulta, el gasto debe poder registrarse sin cuenta.
+  try {
+    const entidadOrigen = identificarBilleteraOrigen(comprobante);
+    if (!entidadOrigen) return null;
+    const { data, error } = await db.from("cuentas")
+      .select("id,nombre,activa").eq("user_id", usuario);
+    if (error || !Array.isArray(data)) return null;
+    const normalizado = nombreBilleteraNormalizado(entidadOrigen);
+    const coincidencias = data.filter(c =>
+      typeof c.nombre === "string" && nombreBilleteraNormalizado(c.nombre) === normalizado
+    );
+    if (coincidencias.length !== 1 || coincidencias[0].activa !== true) return null;
+    return coincidencias[0].id;
+  } catch {
+    // No registrar identidades, OCR, detalles de cuentas ni tokens.
+    console.warn("MERCA_BILLETERA", "CONSULTA_FALLIDA_SIN_ASIGNAR");
+    return null;
+  }
 }
 
 async function huellaTexto(texto: string): Promise<string> {
@@ -444,12 +450,18 @@ Deno.serve(async (req: Request) => {
     }});
   if (req.method !== "POST") return responder("error", 405);
   const identidad = await resolverUsuarioAtajo(req.headers.get("x-merca-token"));
-  if (!identidad.ok) return responder("error", identidad.status);
+  if (!identidad.ok) {
+    console.warn("MERCA_AUTENTICACION", "HTTP", identidad.status);
+    return responder("error", identidad.status);
+  }
 
   const usuario = identidad.usuario;
   const url = Deno.env.get("SUPABASE_URL");
   const clave = getAdminKey();
-  if (!url || !clave) return responder("error", 503);
+  if (!url || !clave) {
+    console.warn("MERCA_CONFIGURACION", "CLAVE_O_URL_FALTANTE");
+    return responder("error", 503);
+  }
 
   let datos: Record<string, unknown>;
   try {
@@ -467,7 +479,10 @@ Deno.serve(async (req: Request) => {
   const { texto_ocr, categoria } = datos;
   if (datos.simular === true || typeof texto_ocr !== "string" || !texto_ocr.trim() ||
       texto_ocr.length > cantidadMaximaOCR || typeof categoria !== "string" ||
-      !categoria.trim() || categoria.length > 80) return responder("error", 422);
+      !categoria.trim() || categoria.length > 80) {
+    console.warn("MERCA_VALIDACION", "CUERPO_JSON_INVALIDO");
+    return responder("error", 422);
+  }
 
   const textoComprobante = texto_ocr as string;
   const posiblesMontos = buscarMontos(textoComprobante);
@@ -477,7 +492,12 @@ Deno.serve(async (req: Request) => {
   const hora = buscarHora(textoComprobante);
 
   // Sin importe o fecha confiable NO se guarda un registro con cifras inventadas.
-  if (!monto || !fecha) return responder("error", 422);
+  // Solo se registran códigos de diagnóstico (no valores privados del comprobante).
+  if (!monto || !fecha) {
+    console.warn("MERCA_VALIDACION", !monto ? "MONTO_AMBIGUO_O_INVALIDO" : "FECHA_AMBIGUA_O_INVALIDA",
+      "montos_encontrados", posiblesMontos.length, "fechas_encontradas", posiblesFechas.length);
+    return responder("error", 422);
+  }
 
   const refOficial = buscarReferencia(textoComprobante);
   const referencia = refOficial || await huellaTexto(textoComprobante);
@@ -486,6 +506,7 @@ Deno.serve(async (req: Request) => {
   const destinatario = buscarDestinatario(textoComprobante);
   const db = createClient(url, clave, { auth: { persistSession: false, autoRefreshToken: false } });
 
+  let etapa = "buscar_duplicados";
   try {
     const { data: existente, error: errExistente } = await db.from("movimientos")
       .select("id,estado,destinatario").eq("user_id", usuario)
@@ -505,10 +526,12 @@ Deno.serve(async (req: Request) => {
     }
 
     // Categoría de gasto: jamás reactivar una categoría archivada.
+    etapa = "crear_o_comprobar_categoria";
     const { error: errCrear } = await db.from("categorias").upsert({
       user_id: usuario, nombre: nombreCategoria, tipo: "gasto", activa: true,
     }, { onConflict: "user_id,nombre,tipo", ignoreDuplicates: true });
     if (errCrear) throw errCrear;
+    etapa = "leer_categoria";
     const { data: cat, error: errCat } = await db.from("categorias")
       .select("id,activa").eq("user_id", usuario).eq("nombre", nombreCategoria)
       .eq("tipo", "gasto").single();
@@ -516,16 +539,25 @@ Deno.serve(async (req: Request) => {
     const confirmado = evaluacion.confirmar && cat.activa;
     const estado = confirmado ? "confirmado" : "pendiente_revision";
     // Si el origen del comprobante no es inequívoco, dejamos Sin asignar.
+    etapa = "detectar_billetera";
     const cuentaOrigenId = await resolverBilleteraOrigen(db, usuario, textoComprobante);
 
-    const { error: errMovimiento } = await db.from("movimientos")
-      .insert({
-        user_id: usuario, tipo: "gasto", monto, moneda: "ARS", fecha, hora,
-        categoria_id: cat.id, destinatario,
-        ...(cuentaOrigenId ? { cuenta_origen_id: cuentaOrigenId } : {}),
-        descripcion: "Atajos",
-        origen_registro: "atajos_ios", referencia_externa: referencia, estado,
-      });
+    const datosMovimiento = {
+      user_id: usuario, tipo: "gasto", monto, moneda: "ARS", fecha, hora,
+      categoria_id: cat.id, destinatario,
+      descripcion: "Atajos",
+      origen_registro: "atajos_ios", referencia_externa: referencia, estado,
+    };
+    etapa = "insertar_movimiento";
+    let { error: errMovimiento } = await db.from("movimientos")
+      .insert({ ...datosMovimiento, ...(cuentaOrigenId ? { cuenta_origen_id: cuentaOrigenId } : {}) });
+
+    // Si la cuenta se eliminó, cambió de usuario o su FK no es válida,
+    // conservar el gasto SIN cuenta. No eliminar ni alterar el historial.
+    if (errMovimiento?.code === "23503" && cuentaOrigenId) {
+      console.warn("MERCA_BILLETERA", "REFERENCIA_NO_VALIDA_REINTENTO_SIN_ASIGNAR");
+      ({ error: errMovimiento } = await db.from("movimientos").insert(datosMovimiento));
+    }
     if (errMovimiento) {
       if (errMovimiento.code === "23505") {
         // Concurrencia: no sobrescribir ni duplicar una operación ya registrada.
@@ -539,8 +571,10 @@ Deno.serve(async (req: Request) => {
     }
     return responder(confirmado ? "exito" : "por confirmar");
   } catch (error) {
-    // Nunca registrar OCR, nombres, importes ni datos bancarios en los logs.
-    console.error("MERCA BD:", error instanceof Error ? error.name : "desconocido");
+    // Etapa + código SQL permiten localizar el error sin registrar datos privados.
+    const codigo = error && typeof error === "object" && "code" in error
+      && typeof error.code === "string" ? error.code : "SIN_CODIGO";
+    console.error("MERCA_ERROR", "etapa", etapa, "codigo", codigo);
     return responder("error", 500);
   }
 });

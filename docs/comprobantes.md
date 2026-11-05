@@ -4,13 +4,21 @@ MERCA recibe comprobantes en la Edge Function configurada por cada Atajo. En el 
 
 **Importante:** los cambios de GitHub no despliegan automáticamente las Edge Functions. El usuario debe actualizar **la función cuyo nombre aparece en la URL de su Atajo**, sin renombrarla.
 
-## Qué conserva la versión v12
+## Qué conserva la versión v13
 
 - Se mantiene la URL existente del Atajo (por ejemplo, `/functions/v1/merca-recibir`), el token `x-merca-token` y el mismo JSON de Atajos: `{"texto_ocr":"...","categoria":"..."}`.
 - No se cambia ni se crea ningún Secret, ni se solicita CUIL o identidad adicional.
 - Se respetan los tokens independientes para varios usuarios y el procesamiento actual de importes, fechas, destinatarios y duplicados.
 - Todos los comprobantes que llegan desde Atajos continúan siendo **gastos**. Las transferencias internas entre billeteras propias se siguen creando desde la web.
 - No se almacenan PDFs, imágenes ni OCR completo en la base de datos.
+
+## Corrección de importes de transferencias (v13)
+
+En los registros de Supabase del 5 de noviembre de 2026 se observó un **HTTP 422** con `MERCA_VALIDACION MONTO_AMBIGUO_O_INVALIDO montos_encontrados 1 fechas_encontradas 1`. Ocurre **antes** de consultar billeteras o insertar movimientos. No se detectó un fallo de autenticación o de FK de cuenta en ese intento.
+
+Para los comprobantes de Mercado Pago que contienen claramente `Comprobante de transferencia`, `Origen y destino` y la entidad `Mercado Pago`, el receptor puede reconstruir importes con miles y centavos unidos (ej. `$ 17.50000`) **aunque el PDF no permita leer la referencia oficial**. El formato de pago se valida independientemente de la referencia; se conserva la comprobación de importes y fechas únicos.
+
+Se siguen rechazando importes realmente ambiguos sin separador, por ejemplo `$ 50000`, porque puede significar $500,00 o $50.000,00. No se inventan montos ni se insertan movimientos de monto cero. En Logs se añade el indicador técnico `patron_importe` sin guardar la cifra, el OCR, ni datos personales; si persiste el error, el patrón permite saber qué caso ajustar.
 
 ## Cómo identifica la billetera automáticamente
 

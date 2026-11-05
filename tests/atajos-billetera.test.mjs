@@ -100,7 +100,7 @@ function servidor({ cuentas = [], token = TOKEN, extras = {}, existente = null,
     Request, Response, TextEncoder, crypto: webcrypto,
     console: {error() {}, warn() {}},
   });
-  vm.runInContext(js + "\n;globalThis.mercaTest = { identificarBilleteraOrigen, resolverBilleteraOrigen, buscarDestinatario };\n", contexto);
+  vm.runInContext(js + "\n;globalThis.mercaTest = { identificarBilleteraOrigen, resolverBilleteraOrigen, buscarDestinatario, normalizarMonto, esPlantillaMontoMercadoPago, clasificarFormatoImporte };\n", contexto);
   const hooks = contexto.mercaTest;
   async function enviar(texto_ocr, categoria = "Comida") {
     const request = new Request("https://example.supabase.co/functions/v1/smooth-handler", {
@@ -266,4 +266,34 @@ test("fecha o monto ambiguo mantiene respuesta de error y no inserta datos", asy
   assert.equal(respuesta.status,422);
   assert.equal(await respuesta.text(),"Error al cargar el movimiento");
   assert.equal(s.base.movimientos.length,0);
+});
+
+test("un PDF de transferencia MP con miles y centavos unidos no requiere leer el número de operación para el monto", async () => {
+  const s=servidor({cuentas:[cuenta("mp")]});
+  const sinReferencia=pdfMercadoPago({etiqueta:"Comprobante de transferencia"})
+    .replace("N.° de operación de Mercado Pago\n999000111222","Referencia de transferencia\n999000111222");
+  assert.equal(s.hooks.esPlantillaMontoMercadoPago(sinReferencia),true);
+  assert.equal(s.hooks.normalizarMonto("$ 17.50000",sinReferencia),"17500.00");
+  const res=await s.enviar(sinReferencia);
+  assert.equal(res.status,200);
+  assert.equal(s.base.movimientos.length,1);
+  assert.equal(s.base.movimientos[0].monto,"17500.00");
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,"mp");
+});
+
+test("importe sin separador sigue rechazándose por ambigüedad aunque sea MP", async () => {
+  const s=servidor({cuentas:[cuenta("mp")]});
+  const ambiguo=pdfMercadoPago({etiqueta:"Comprobante de transferencia"}).replace("$ 17.50000","$ 50000");
+  assert.equal(s.hooks.normalizarMonto("$ 50000",ambiguo),null);
+  assert.equal(s.hooks.clasificarFormatoImporte("$ 50000",ambiguo),"SIN_SEPARADOR_AMBIGUO");
+  const res=await s.enviar(ambiguo);
+  assert.equal(res.status,422);
+  assert.equal(s.base.movimientos.length,0);
+});
+
+test("no interpreta centavos unidos de un documento no reconocido", () => {
+  const s=servidor();
+  const otro="Recibo genérico\nOrigen y destino\nMercado Pago\n$ 17.50000";
+  assert.equal(s.hooks.esPlantillaMontoMercadoPago(otro),false);
+  assert.equal(s.hooks.normalizarMonto("$ 17.50000",otro),null);
 });

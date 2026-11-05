@@ -7,7 +7,7 @@
 - Gastos e inversiones descuentan de la billetera de origen; los ingresos se suman a la de destino.
 - Las transferencias entre cuentas propias restan y suman exactamente lo mismo; no son ingresos ni gastos.
 - Las operaciones anteriores sin billetera siguen visibles como **Sin asignar**. No se borran ni se reasignan automáticamente.
-- La función Supabase y los **Atajos de iOS no cambian**. Por ahora sus gastos seguirán sin billetera hasta su edición manual.
+- Los **Atajos de iOS no cambian**. Cuando el receptor v10 sea desplegado en Supabase, los comprobantes MP con emisor y CUIL verificados podrán vincularse automáticamente; los demás seguirán sin asignar.
 - Se conserva el balance por período y se muestra aparte el saldo global histórico.
 
 ## Paso a paso en Supabase
@@ -41,7 +41,7 @@ Para clasificar movimientos históricos, conviene **iniciar con saldo de apertur
 - Una transferencia entre billeteras propias mueve dinero entre ambas sin modificar el total ni el balance del período.
 - Al editar un gasto previo, se redistribuye el dinero entre la billetera anterior (o Sin asignar) y la nueva.
 - Desactivar una billetera conserva su historial y saldo, pero deja de ofrecerla para nuevas operaciones.
-- El atajo de iOS debe seguir creando gastos sin billetera, que luego pueden asignarse desde la web.
+- El atajo de iOS debe seguir funcionando: si el emisor MP y el CUIL autorizado coinciden, el gasto nuevo se vincula con Mercado Pago; si no, queda Sin asignar.
 
 ## Seguridad y compatibilidad
 
@@ -50,3 +50,6 @@ La migración agrega la columna saldo_inicial a la tabla de cuentas, políticas 
 **Orden recomendado:** respaldar, ejecutar SQL, verificar y después utilizar la interfaz. La aplicación tiene una consulta alternativa para seguir funcionando si todavía no se ejecutó la migración.
 
 Si surge un error SQL, conservar el mensaje y revisar el esquema existente antes de aplicar cambios adicionales.
+
+
+Para activar el reconocimiento de billetera en Atajos, consultar la [guía de despliegue de smooth-handler](comprobantes.md). No requiere nueva migración SQL.

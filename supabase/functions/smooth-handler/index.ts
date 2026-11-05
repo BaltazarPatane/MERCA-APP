@@ -258,7 +258,7 @@ function identificarOrigenMercadoPago(texto: string): { cuil: string; entidad: "
   const cuerpo = textoOperacion(texto);
   if (!esFormatoPagoMP(cuerpo)) return null;
   // Solo plantillas de pago MP conocidas. No inferir a partir del logo/emisor.
-  if (!/^\s*comprobante\s+de\s+pago\b/i.test(cuerpo)) return null;
+  if (!/^\s*comprobante\s+de\s+(?:pago|transferencia)\b/i.test(cuerpo)) return null;
   if (/\b(?:tarjeta|visa|mastercard|master\s*card|amex|american\s+express|cr[eé]dito|d[eé]bito|cuotas)\b/i.test(cuerpo)) return null;
 
   const seccion = cuerpo.match(/(?:^|\n)\s*origen\s+y\s+destino\s*\n([\s\S]*?)(?=\n\s*n[.°º\s]*de\s+operaci[oó]n\b|$)/i)?.[1];

@@ -1,28 +1,21 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 /*
-MERCA · smooth-handler · v10
-Receptor multiusuario (v9) + selección conservadora de billetera de origen.
+MERCA · smooth-handler · v11
+Receptor multiusuario + asociación automática de la billetera de origen.
 
-DESPLIEGUE
-- Sustituir el contenido de la función EXISTENTE smooth-handler en Supabase.
-- Mantener la URL, el header x-merca-token y el JSON del Atajo SIN cambios.
-- Conservar los secretos anteriores (MERCA_INGEST_TOKEN, MERCA_OWNER_USER_ID,
-  MERCA_INGEST_USERS, y los secretos de Supabase).
-- Añadir opcionalmente MERCA_CUILS_POR_USUARIO en Edge Functions > Secrets:
-  {"UUID_USUARIO":"CUIL_DE_11_DIGITOS","OTRO_UUID":"OTRO_CUIL"}
-  Para asignación automática segura, es obligatorio configurar el CUIL del
-  titular emisor para cada usuario. Si falta, se mantiene Sin asignar.
-- Cuentas: se busca una única billetera ACTIVA llamada exactamente
-  "Mercado Pago" para el usuario que autenticó el Atajo.
-- Solo se reconoce el formato comprobado de Mercado Pago con Origen y destino,
-  CUIL emisor y ausencia de indicios de pago mediante tarjeta.
-- No modificar registros duplicados ni cuentas asignadas manualmente.
-- No se cambian las categorías ni el tratamiento de los comprobantes como gastos.
-- Este archivo no incluye tokens privados ni claves de servicio.
+- Mantener la URL, el token y el JSON del Atajo existente.
+- No requiere CUIL, secretos adicionales ni cambios en Supabase SQL.
+- Solo se asigna una cuenta si aparece como entidad de ORIGEN explícita
+  en el comprobante y coincide con una sola cuenta activa del usuario.
+- Si el comprobante no permite identificarla con claridad, se deja Sin asignar.
+- Los comprobantes con tarjetas o financiación tampoco se asignan automáticamente.
+- Las transferencias recibidas desde Atajos siguen siendo gastos (regla existente).
+- Los comprobantes duplicados y las asignaciones manuales se conservan.
+- Mantener la configuración y los secretos multiusuario existentes en Supabase.
 */
 
-// MERCA - receptor HTTPS v10 multiusuario. Todo comprobante compartido desde Atajos es GASTO.
+// MERCA - receptor HTTPS v11 multiusuario. Todo comprobante compartido desde Atajos es GASTO.
 // Los INGRESOS se agregan manualmente desde la aplicación web.
 // No se pide «tipo» ni se usa el titular para clasificar el gasto.
 // Si el nombre de destino falta, se guarda su alias o identificador reconocido.
@@ -248,52 +241,59 @@ export function buscarDestinatario(texto: string): string | null {
 }
 
 /**
- * Selección estricta de cuenta emisora. Si no se puede identificar con certeza,
- * se retorna null y el gasto continúa guardándose como «Sin asignar».
- *
- * El emisor del PDF no siempre es el medio efectivo de financiación:
- * si hay señales de tarjeta/crédito/débito, NO descontamos Mercado Pago.
+ * Busca la ENTIDAD que figura en el origen del movimiento, no la del destino.
+ * No usa CUIL/titular para determinar la billetera ni lee datos de identidad.
+ * Solo considera nombres de instituciones conocidas; el nombre se coteja con
+ * la cuenta configurada por el propio usuario.
  */
-function identificarOrigenMercadoPago(texto: string): { cuil: string; entidad: "mercado_pago" } | null {
+function identificarBilleteraOrigen(texto: string): string | null {
   const cuerpo = textoOperacion(texto);
-  if (!esFormatoPagoMP(cuerpo)) return null;
-  // Solo plantillas de pago MP conocidas. No inferir a partir del logo/emisor.
-  if (!/^\s*comprobante\s+de\s+(?:pago|transferencia)\b/i.test(cuerpo)) return null;
+  if (!/\b(?:comprobante|recibo|transferencia|pago)\b/i.test(cuerpo)) return null;
+
+  // Si el comprobante informa financiación con tarjeta, el emisor del PDF
+  // podría no ser la cuenta de la que realmente salió el dinero.
   if (/\b(?:tarjeta|visa|mastercard|master\s*card|amex|american\s+express|cr[eé]dito|d[eé]bito|cuotas)\b/i.test(cuerpo)) return null;
 
+  function nombreInstitucion(linea: string): string | null {
+    const limpia = linea.trim().replace(/^(?:entidad|instituci[oó]n|billetera|banco|cuenta)\s*:\s*/i, "");
+    return esLineaEntidadFinanciera(limpia) ? limpia : null;
+  }
+
+  // Formatos con etiqueta explícita. Ej.: "Billetera de origen: Prex".
+  // Se ignoran etiquetas de destino y nombres de bancos fuera del origen.
+  const etiqueta = cuerpo.match(/(?:^|\n)\s*(?:(?:billetera|entidad|instituci[oó]n|banco|cuenta)\s+(?:de\s+)?origen|origen)\s*:\s*([^\r\n]+)/i);
+  if (etiqueta) {
+    const entidad = nombreInstitucion(etiqueta[1]);
+    if (entidad) return entidad;
+  }
+
+  // Encabezados de bloques separados: Origen / institución / Destino.
+  const bloqueOrigen = cuerpo.match(/(?:^|\n)\s*origen\s*:?\s*\n([\s\S]*?)(?=\n\s*(?:destino|destinatario)\s*:?\s*(?:\n|$))/i)?.[1];
+  if (bloqueOrigen) {
+    const instituciones = bloqueOrigen.split(/\r?\n/)
+      .map(nombreInstitucion).filter((v): v is string => v !== null);
+    if (instituciones.length === 1) return instituciones[0];
+    return null; // Dos posibles orígenes: no adivinar.
+  }
+
+  // Comprobantes Mercado Pago probados:
+  // Origen y destino / persona que envía / [identificador opcional] /
+  // Mercado Pago / persona receptora / [identificador opcional] / Mercado Pago.
+  // El identificador NO es requerido ni se analiza para elegir la billetera.
   const seccion = cuerpo.match(/(?:^|\n)\s*origen\s+y\s+destino\s*\n([\s\S]*?)(?=\n\s*n[.°º\s]*de\s+operaci[oó]n\b|$)/i)?.[1];
   if (!seccion) return null;
   const lineas = seccion.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  // Plantilla validada:
-  // Nombre origen / CUIL origen / Mercado Pago /
-  // Nombre destino / CUIT o CUIL destino / institución destino.
-  if (lineas.length < 6) return null;
-  if (!nombreDestinatarioValido(lineas[0]) ||
-      !nombreDestinatarioValido(lineas[3]) ||
-      !esLineaIdentificador(lineas[4]) ||
-      !esLineaEntidadFinanciera(lineas[5])) return null;
-  const titular = lineas[1].match(/^CUIL\s*:\s*([\d.\s-]{11,18})$/i);
-  if (!titular) return null;
-  const cuil = titular[1].replace(/\D/g, "");
-  if (!/^\d{11}$/.test(cuil)) return null;
-  if (lineas[2].normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ") !== "mercado pago") return null;
-  return { cuil, entidad: "mercado_pago" };
-}
 
-/** CUIL privados de titulares: nunca en GitHub ni dentro del payload del Atajo. */
-function cuilAutorizadoParaUsuario(usuario: string): string | null {
-  const configuracion = Deno.env.get("MERCA_CUILS_POR_USUARIO");
-  if (!configuracion) return null;
-  try {
-    const datos: unknown = JSON.parse(configuracion);
-    if (!datos || typeof datos !== "object" || Array.isArray(datos)) return null;
-    const valor = (datos as Record<string, unknown>)[usuario.toLowerCase()];
-    if (typeof valor !== "string") return null;
-    const cuil = valor.replace(/\D/g, "");
-    return /^\d{11}$/.test(cuil) ? cuil : null;
-  } catch {
-    return null;
+  for (let i = 1; i < lineas.length; i++) {
+    const entidad = nombreInstitucion(lineas[i]);
+    if (!entidad) continue;
+    // Debe existir una persona/comercio antes de la entidad de origen
+    // y OTRO participante después de ella, no solo el banco de destino.
+    const tieneEmisor = lineas.slice(0, i).some(s => nombreDestinatarioValido(s) !== null && !nombreInstitucion(s));
+    const tieneReceptor = lineas.slice(i + 1).some(s => nombreDestinatarioValido(s) !== null && !nombreInstitucion(s));
+    return tieneEmisor && tieneReceptor ? entidad : null;
   }
+  return null;
 }
 
 function nombreBilleteraNormalizado(nombre: string): string {
@@ -301,25 +301,21 @@ function nombreBilleteraNormalizado(nombre: string): string {
     .toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-/**
- * La autenticación de Atajos determina usuario. Ni el OCR ni el JSON deciden
- * la cuenta. Si falla consulta, falta CUIL o hay dos cuentas iguales, no
- * hacemos ninguna asignación, preservando la operación anterior.
- */
+/** La búsqueda se limita al usuario autenticado por su token de Atajos. */
 async function resolverBilleteraOrigen(
   db: ReturnType<typeof createClient>, usuario: string, comprobante: string
 ): Promise<string | null> {
-  const identificacion = identificarOrigenMercadoPago(comprobante);
-  if (!identificacion) return null;
-  const cuil = cuilAutorizadoParaUsuario(usuario);
-  if (!cuil || cuil !== identificacion.cuil) return null;
+  const entidadOrigen = identificarBilleteraOrigen(comprobante);
+  if (!entidadOrigen) return null;
 
   const { data, error } = await db.from("cuentas")
     .select("id,nombre,activa").eq("user_id", usuario);
   if (error || !data) return null;
+  const normalizado = nombreBilleteraNormalizado(entidadOrigen);
   const coincidencias = data.filter(c =>
-    typeof c.nombre === "string" && nombreBilleteraNormalizado(c.nombre) === "mercado pago"
+    typeof c.nombre === "string" && nombreBilleteraNormalizado(c.nombre) === normalizado
   );
+  // Dos billeteras con el mismo nombre o cuenta inactiva: asignación ambigua.
   if (coincidencias.length !== 1 || coincidencias[0].activa !== true) return null;
   return coincidencias[0].id;
 }
@@ -519,7 +515,7 @@ Deno.serve(async (req: Request) => {
     if (errCat) throw errCat;
     const confirmado = evaluacion.confirmar && cat.activa;
     const estado = confirmado ? "confirmado" : "pendiente_revision";
-    // Si la fuente de fondos no es inequívoca, dejamos el origen sin asignar.
+    // Si el origen del comprobante no es inequívoco, dejamos Sin asignar.
     const cuentaOrigenId = await resolverBilleteraOrigen(db, usuario, textoComprobante);
 
     const { error: errMovimiento } = await db.from("movimientos")

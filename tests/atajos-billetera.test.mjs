@@ -75,12 +75,10 @@ function dbSimulada(cuentas = [], existente = null) {
   return db;
 }
 
-function servidor({ cuentas = [], cuils = {[USUARIO]: CUIL}, token = TOKEN,
-                    extras = {}, existente = null } = {}) {
+function servidor({ cuentas = [], token = TOKEN, extras = {}, existente = null } = {}) {
   const base = dbSimulada(cuentas, existente);
   const env = {
     MERCA_INGEST_USERS: JSON.stringify({[USUARIO]: TOKEN,[AMIGO]: TOKEN_AMIGO}),
-    MERCA_CUILS_POR_USUARIO: cuils === null ? undefined : JSON.stringify(cuils),
     SUPABASE_URL: "https://example.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: "NO_ES_UN_SECRET_REAL",
     ...extras,
@@ -95,7 +93,7 @@ function servidor({ cuentas = [], cuils = {[USUARIO]: CUIL}, token = TOKEN,
     Request, Response, TextEncoder, crypto: webcrypto,
     console: {error() {}},
   });
-  vm.runInContext(js + "\n;globalThis.mercaTest = { identificarOrigenMercadoPago, resolverBilleteraOrigen, buscarDestinatario };\n", contexto);
+  vm.runInContext(js + "\n;globalThis.mercaTest = { identificarBilleteraOrigen, resolverBilleteraOrigen, buscarDestinatario };\n", contexto);
   const hooks = contexto.mercaTest;
   async function enviar(texto_ocr, categoria = "Comida") {
     const request = new Request("https://example.supabase.co/functions/v1/smooth-handler", {
@@ -111,54 +109,80 @@ function servidor({ cuentas = [], cuils = {[USUARIO]: CUIL}, token = TOKEN,
 const cuenta = (id, user_id = USUARIO, activa = true, nombre = "Mercado Pago") =>
   ({id,user_id,activa,nombre});
 
-test("reconoce el bloque emisor de los dos comprobantes MP probados", () => {
+test("identifica la institución emisora en los dos comprobantes MP probados", () => {
   const {hooks} = servidor();
   const grido = pdfMercadoPago();
-  const verduleria = pdfMercadoPago({extra: "   "});
-  assert.equal(hooks.identificarOrigenMercadoPago(grido)?.entidad,"mercado_pago");
-  assert.equal(hooks.identificarOrigenMercadoPago(verduleria)?.cuil,CUIL);
+  const verduleria = pdfMercadoPago({extra:"   "});
+  assert.equal(hooks.identificarBilleteraOrigen(grido),"Mercado Pago");
+  assert.equal(hooks.identificarBilleteraOrigen(verduleria),"Mercado Pago");
 });
 
-test("el Mercado Pago del destinatario jamás se toma como origen", () => {
-  const {hooks} = servidor();
+test("la entidad del destino nunca se toma como la de origen", async () => {
+  const s = servidor({cuentas:[cuenta("mp")]});
   const pago = pdfMercadoPago({origen:"Banco Provincia", destino:"Mercado Pago"});
-  assert.equal(hooks.identificarOrigenMercadoPago(pago),null);
+  assert.equal(s.hooks.identificarBilleteraOrigen(pago),"Banco Provincia");
+  assert.equal((await s.enviar(pago)).status,200);
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
 });
 
-test("una transferencia MP saliente utiliza el mismo reconocimiento del origen", async () => {
-  const s=servidor({cuentas:[cuenta("mp-cuenta")]});
+test("banco explícito en origen se relaciona con la cuenta correspondiente", async () => {
+  const s = servidor({cuentas:[cuenta("provincia",USUARIO,true,"Banco Provincia")]});
+  const pago = pdfMercadoPago({origen:"Banco Provincia", destino:"Mercado Pago"});
+  assert.equal((await s.enviar(pago)).status,200);
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,"provincia");
+});
+
+test("transferencia saliente MP conserva la regla de gasto preexistente", async () => {
+  const s = servidor({cuentas:[cuenta("mp-cuenta")]});
   assert.equal((await s.enviar(pdfMercadoPago({etiqueta:"Comprobante de transferencia"}))).status,200);
   assert.equal(s.base.movimientos[0].cuenta_origen_id,"mp-cuenta");
-  // Regla preexistente de Atajos: sigue siendo gasto, no transferencia interna.
   assert.equal(s.base.movimientos[0].tipo,"gasto");
 });
 
-test("tarjetas y financiación hacen que el origen quede sin asignar", () => {
+test("no requiere CUIL ni configuración nueva para identificar un origen", async () => {
+  const sinIdentidad=pdfMercadoPago().replace("CUIL: " + CUIL + "\n","");
+  const s = servidor({cuentas:[cuenta("mp")]});
+  assert.equal(s.hooks.identificarBilleteraOrigen(sinIdentidad),"Mercado Pago");
+  assert.equal((await s.enviar(sinIdentidad)).status,200);
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,"mp");
+});
+
+test("puede tomar billeteras de una sección Origen claramente delimitada", () => {
   const {hooks} = servidor();
-  for(const extra of ["Medio de pago: Tarjeta Visa", "Tarjeta de crédito", "Pago con débito", "6 cuotas"]) {
-    assert.equal(hooks.identificarOrigenMercadoPago(pdfMercadoPago({extra})),null);
+  const recibo=[
+    "Comprobante de transferencia",
+    "Origen",
+    "Cliente de prueba",
+    "Prex",
+    "Destino",
+    "Comercio final",
+    "Mercado Pago",
+  ].join("\n");
+  assert.equal(hooks.identificarBilleteraOrigen(recibo),"Prex");
+});
+
+test("puede leer campos explícitos de origen sin interpretar el destino", () => {
+  const {hooks} = servidor();
+  assert.equal(hooks.identificarBilleteraOrigen("Comprobante de pago\nBilletera de origen: Ualá\nBilletera de destino: Mercado Pago"),"Ualá");
+});
+
+test("fuente de fondos con tarjeta/cuotas se conserva sin asignar", () => {
+  const {hooks} = servidor();
+  for(const extra of ["Medio de pago: Tarjeta Visa","Tarjeta de crédito","Pago con débito","6 cuotas"]) {
+    assert.equal(hooks.identificarBilleteraOrigen(pdfMercadoPago({extra})),null);
   }
 });
 
-test("no adivina billeteras a partir de logos, emisores ni formatos incompletos", () => {
+test("si no hay origen claro, no se infiere billetera del logo ni del destino", () => {
   const {hooks} = servidor();
-  assert.equal(hooks.identificarOrigenMercadoPago("Mercado Pago\nComprobante de pago\n$ 100"),null);
-  assert.equal(hooks.identificarOrigenMercadoPago(pdfMercadoPago({etiqueta:"Recibo de compra"})),null);
-  assert.equal(hooks.identificarOrigenMercadoPago(pdfMercadoPago().replace("CUIL:", "CBU:")),null);
+  assert.equal(hooks.identificarBilleteraOrigen("Mercado Pago\nComprobante de pago\n$ 100"),null);
+  assert.equal(hooks.identificarBilleteraOrigen(pdfMercadoPago({etiqueta:"Recibo de compra"}).replace("Origen y destino","Datos de operación")),null);
+  assert.equal(hooks.identificarBilleteraOrigen("Comprobante de transferencia\nOrigen y destino\nCliente Prueba\nComercio Final\nMercado Pago"),null);
 });
 
-test("no asigna si el CUIL de la persona que pagó no coincide con el usuario", async () => {
-  const s = servidor({cuentas:[cuenta("mp")]});
-  const respuesta = await s.enviar(pdfMercadoPago({cuil:"20999888777"}));
-  assert.equal(respuesta.status,200);
-  assert.equal(s.base.movimientos.length,1);
-  assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
-});
-
-test("no asigna si la configuración de CUIL todavía no existe", async () => {
-  const s = servidor({cuentas:[cuenta("mp")],cuils:null});
-  assert.equal((await s.enviar(pdfMercadoPago())).status,200);
-  assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
+test("si el bloque de origen tiene dos instituciones, no asigna arbitrariamente", () => {
+  const {hooks} = servidor();
+  assert.equal(hooks.identificarBilleteraOrigen("Comprobante de pago\nOrigen\nMercado Pago\nPrex\nDestino\nComercio final"),null);
 });
 
 test("solo acepta una cuenta activa exacta del usuario; jamás la de otro", async () => {
@@ -185,13 +209,12 @@ test("si hay dos cuentas con el mismo nombre o la cuenta está inactiva, no asig
   }
 });
 
-test("el token de otro usuario no autoriza vincular una cuenta propia", async () => {
-  const s=servidor({cuentas:[cuenta("mp-amigo",AMIGO)],token:TOKEN_AMIGO,
-    cuils:{[USUARIO]: CUIL,[AMIGO]:"20999888777"}});
+test("cada token solo permite vincular la billetera del usuario correspondiente", async () => {
+  const s=servidor({cuentas:[cuenta("mp-ajena",USUARIO),cuenta("mp-amigo",AMIGO)],token:TOKEN_AMIGO});
   const resultado=await s.enviar(pdfMercadoPago());
   assert.equal(resultado.status,200);
   assert.equal(s.base.movimientos[0].user_id,AMIGO);
-  assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,"mp-amigo");
 });
 
 test("un comprobante repetido no reemplaza billeteras manuales ni agrega movimientos", async () => {

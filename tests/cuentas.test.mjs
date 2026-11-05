@@ -64,6 +64,8 @@ test("los saldos de apertura se contabilizan una sola vez, sin crear ingresos", 
 
 test("saldo inicial acepta formato ARS y rechaza importes ambiguos", () => {
   assert.equal(saldoInicialParaBD("1.500,25"), "1500.25");
+  assert.equal(saldoInicialParaBD("1.000"), "1000.00");
+  assert.equal(saldoInicialParaBD("12.345"), "12345.00");
   assert.equal(saldoInicialParaBD("1500.25"), "1500.25");
   assert.equal(saldoInicialParaBD(""), "0.00");
   assert.equal(saldoInicialParaBD("-10"), null);

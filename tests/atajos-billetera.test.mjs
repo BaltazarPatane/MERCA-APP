@@ -30,7 +30,7 @@ function pdfMercadoPago({ cuil = CUIL, origen = "Mercado Pago", destino = "Merca
     "CUIL: " + cuil,
     origen,
     "",
-    "Comercio de Prueba",
+    "Tienda Prueba",
     "CUIT: 30987654321",
     destino,
     "",
@@ -174,7 +174,7 @@ test("solo acepta una cuenta activa exacta del usuario; jamás la de otro", asyn
   assert.equal(s.base.movimientos[0].tipo,"gasto");
   assert.equal(s.base.movimientos[0].estado,"confirmado");
   assert.equal(s.base.movimientos[0].categoria_id,"cat-ejemplo");
-  assert.equal(s.base.movimientos[0].destinatario,"Comercio de Prueba");
+  assert.equal(s.base.movimientos[0].destinatario,"Tienda Prueba");
 });
 
 test("si hay dos cuentas con el mismo nombre o la cuenta está inactiva, no asigna", async () => {

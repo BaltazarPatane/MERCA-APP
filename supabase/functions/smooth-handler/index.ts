@@ -305,12 +305,11 @@ function nombreBilleteraNormalizado(nombre: string): string {
 async function resolverBilleteraOrigen(
   db: ReturnType<typeof createClient>, usuario: string, comprobante: string
 ): Promise<string | null> {
-  const entidadOrigen = identificarBilleteraOrigen(comprobante);
-  if (!entidadOrigen) return null;
-
-  // La billetera es un dato opcional: cualquier fallo en esta consulta
-  // debe dejarla Sin asignar, NUNCA impedir guardar el comprobante.
+  // La billetera es un dato opcional: incluso si falla el reconocimiento
+  // o la consulta, el gasto debe poder registrarse sin cuenta.
   try {
+    const entidadOrigen = identificarBilleteraOrigen(comprobante);
+    if (!entidadOrigen) return null;
     const { data, error } = await db.from("cuentas")
       .select("id,nombre,activa").eq("user_id", usuario);
     if (error || !Array.isArray(data)) return null;
@@ -451,12 +450,18 @@ Deno.serve(async (req: Request) => {
     }});
   if (req.method !== "POST") return responder("error", 405);
   const identidad = await resolverUsuarioAtajo(req.headers.get("x-merca-token"));
-  if (!identidad.ok) return responder("error", identidad.status);
+  if (!identidad.ok) {
+    console.warn("MERCA_AUTENTICACION", "HTTP", identidad.status);
+    return responder("error", identidad.status);
+  }
 
   const usuario = identidad.usuario;
   const url = Deno.env.get("SUPABASE_URL");
   const clave = getAdminKey();
-  if (!url || !clave) return responder("error", 503);
+  if (!url || !clave) {
+    console.warn("MERCA_CONFIGURACION", "CLAVE_O_URL_FALTANTE");
+    return responder("error", 503);
+  }
 
   let datos: Record<string, unknown>;
   try {
@@ -474,7 +479,10 @@ Deno.serve(async (req: Request) => {
   const { texto_ocr, categoria } = datos;
   if (datos.simular === true || typeof texto_ocr !== "string" || !texto_ocr.trim() ||
       texto_ocr.length > cantidadMaximaOCR || typeof categoria !== "string" ||
-      !categoria.trim() || categoria.length > 80) return responder("error", 422);
+      !categoria.trim() || categoria.length > 80) {
+    console.warn("MERCA_VALIDACION", "CUERPO_JSON_INVALIDO");
+    return responder("error", 422);
+  }
 
   const textoComprobante = texto_ocr as string;
   const posiblesMontos = buscarMontos(textoComprobante);

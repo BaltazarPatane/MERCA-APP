@@ -9,11 +9,10 @@ import NuevoMovimientoPanel from "./components/NuevoMovimientoPanel";
 import AjustesPanel from "./components/AjustesPanel";
 import InversionesPanel from "./components/InversionesPanel";
 import { montoParaBD } from "./types";
-import type { Categoria, Movimiento } from "./types";
+import type { Categoria, Cuenta, Movimiento } from "./types";
 
 
 type Tab = "inicio" | "movimientos" | "inversiones" | "agregar" | "ajustes";
-type Cuenta = { id: string; nombre: string; tipo?: string; activa?: boolean };
 const fechaHoy = () => new Date().toLocaleDateString("en-CA");
 const normalizarBusqueda = (texto: string) => texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").trim();
 const mesHoy = () => fechaHoy().slice(0, 7);
@@ -34,6 +33,7 @@ export default function App() {
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
+  const [cuentasDisponibles, setCuentasDisponibles] = useState(true);
   const [periodo, setPeriodo] = useState("mes");
   const [mes, setMes] = useState(mesHoy());
   const [dia, setDia] = useState(fechaHoy());
@@ -41,13 +41,15 @@ export default function App() {
   const [hasta, setHasta] = useState(fechaHoy());
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [busquedaDestinatario, setBusquedaDestinatario] = useState("");
+  const [filtroCuenta, setFiltroCuenta] = useState("todas");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [tipoNuevo, setTipoNuevo] = useState<"gasto" | "ingreso" | "inversion">("gasto");
+  const [tipoNuevo, setTipoNuevo] = useState<"gasto" | "ingreso" | "inversion" | "transferencia">("gasto");
   const [montoNuevo, setMontoNuevo] = useState("");
   const [fechaNueva, setFechaNueva] = useState(fechaHoy());
   const [categoriaNueva, setCategoriaNueva] = useState("");
   const [cuentaNueva, setCuentaNueva] = useState("");
+  const [cuentaDestinoNueva, setCuentaDestinoNueva] = useState("");
   const [descripcionNueva, setDescripcionNueva] = useState("");
   const [destinatarioNuevo, setDestinatarioNuevo] = useState("");
   const [notice, setNotice] = useState("");
@@ -95,19 +97,30 @@ export default function App() {
     const [mov, cat, cta] = await Promise.all([
       cargarHistorialCompleto(),
       client.from("categorias").select("id,nombre,tipo,activa,color").order("nombre"),
-      client.from("cuentas").select("id,nombre,tipo,activa").order("nombre"),
+      client.from("cuentas").select("id,nombre,tipo,moneda,activa,saldo_inicial").eq("user_id",userId).order("nombre"),
     ]);
-    if (mov.error || cat.error) setError(mov.error?.message || cat.error?.message || "Error desconocido");
+    // Compatibilidad hasta ejecutar la migración: el resto de MERCA sigue funcionando.
+    const migracionPendiente = !!cta.error && (cta.error.code === "42703" || /saldo_inicial/i.test(cta.error.message));
+    let cuentasCargadas: Cuenta[] = [];
+    let errorCuentas = cta.error;
+    if (migracionPendiente) {
+      const legacy = await client.from("cuentas").select("id,nombre,tipo,moneda,activa").eq("user_id",userId).order("nombre");
+      errorCuentas = legacy.error;
+      cuentasCargadas = (legacy.data || []).map(c => ({...c,saldo_inicial:0})) as Cuenta[];
+    } else if (!cta.error) {
+      cuentasCargadas = (cta.data || []) as Cuenta[];
+    }
+    setCuentasDisponibles(!migracionPendiente && !errorCuentas);
+    if (mov.error || cat.error || errorCuentas) setError(mov.error?.message || cat.error?.message || errorCuentas?.message || "Error desconocido");
     else {
       setMovimientos((mov.data || []) as Movimiento[]);
       setCategorias((cat.data || []) as Categoria[]);
-      // Si la consulta opcional de cuentas falla, no se bloquea el historial.
-      setCuentas(cta.error ? [] : (cta.data || []) as Cuenta[]);
+      setCuentas(cuentasCargadas);
     }
     setLoading(false);
   }
 
-  useEffect(() => { if (session) void cargar(); else { setMovimientos([]); setCategorias([]); setCuentas([]); } }, [session?.user.id]);
+  useEffect(() => { if (session) void cargar(); else { setMovimientos([]); setCategorias([]); setCuentas([]); setCuentasDisponibles(true); } }, [session?.user.id]);
 
   const visibles = useMemo(() => movimientos.filter(m => {
     if (m.tipo === "inversion") return false; // Historial separado para inversiones
@@ -115,8 +128,12 @@ export default function App() {
     if (periodo === "dia" && m.fecha !== dia) return false;
     if (periodo === "rango" && (m.fecha < desde || m.fecha > hasta)) return false;
     if (busquedaDestinatario.trim() && !normalizarBusqueda(m.destinatario ?? "").includes(normalizarBusqueda(busquedaDestinatario))) return false;
+    if (filtroCuenta === "sin_asignar") {
+      const origen = m.tipo === "ingreso" ? m.cuenta_destino_id : m.cuenta_origen_id;
+      if (m.tipo === "transferencia" ? !!m.cuenta_origen_id && !!m.cuenta_destino_id : !!origen) return false;
+    } else if (filtroCuenta !== "todas" && m.cuenta_origen_id !== filtroCuenta && m.cuenta_destino_id !== filtroCuenta) return false;
     return filtroEstado === "todos" || m.estado === filtroEstado;
-  }), [movimientos, periodo, mes, dia, desde, hasta, filtroEstado, busquedaDestinatario]);
+  } ), [movimientos, periodo, mes, dia, desde, hasta, filtroEstado, busquedaDestinatario, filtroCuenta]);
 
 
   async function login(e: React.FormEvent) {
@@ -209,29 +226,45 @@ export default function App() {
     e.preventDefault();
     if (!supabase || !session) return;
     const importe = montoParaBD(montoNuevo);
-    if (!importe || !fechaNueva || !categoriaNueva || !categorias.some(c=>c.id===categoriaNueva && c.tipo===tipoNuevo && c.activa)) { setError("Revisá el importe, la fecha y seleccioná una categoría activa del tipo correspondiente."); return; }
+    const esTransferencia = tipoNuevo === "transferencia";
+    if (!importe || !fechaNueva || (!esTransferencia && !categorias.some(c=>c.id===categoriaNueva && c.tipo===tipoNuevo && c.activa))) {
+      setError("Revisá el importe, la fecha y seleccioná una categoría activa del tipo correspondiente."); return;
+    }
+    const cuentasActivas = cuentas.filter(c => c.activa);
+    if (esTransferencia && (!cuentaNueva || !cuentaDestinoNueva || cuentaNueva === cuentaDestinoNueva ||
+        !cuentasActivas.some(c => c.id === cuentaNueva) || !cuentasActivas.some(c => c.id === cuentaDestinoNueva))) {
+      setError("Para una transferencia, elegí dos billeteras activas y diferentes."); return;
+    }
+    if (!esTransferencia && cuentaNueva && !cuentasActivas.some(c => c.id === cuentaNueva)) {
+      setError("Elegí una billetera activa o dejá el movimiento sin asignar."); return;
+    }
     setBusy(true); setError("");
     const { error: err } = await supabase.from("movimientos").insert({
       user_id: session.user.id,
       tipo: tipoNuevo, monto: importe, moneda: "ARS",
-      fecha: fechaNueva, categoria_id: categoriaNueva,
+      fecha: fechaNueva, categoria_id: esTransferencia ? null : categoriaNueva,
       descripcion: descripcionNueva.trim() || null,
       cuenta_origen_id: tipoNuevo !== "ingreso" ? (cuentaNueva || null) : null,
-      cuenta_destino_id: tipoNuevo === "ingreso" ? (cuentaNueva || null) : null,
-      destinatario: tipoNuevo !== "ingreso" ? (destinatarioNuevo.trim() || null) : null,
+      cuenta_destino_id: esTransferencia ? cuentaDestinoNueva : tipoNuevo === "ingreso" ? (cuentaNueva || null) : null,
+      destinatario: tipoNuevo === "gasto" || tipoNuevo === "inversion" ? (destinatarioNuevo.trim() || null) : null,
       origen_registro: "manual", estado: "confirmado",
     });
     setBusy(false);
     if (err) setError(tipoNuevo === "inversion" && err.code === "23514" ? "Para habilitar inversiones, ejecutá primero la migración SQL de Inversiones en Supabase." : err.message);
-    else { setMontoNuevo(""); setDescripcionNueva(""); setDestinatarioNuevo(""); setCategoriaNueva(""); setCuentaNueva(""); setNotice(tipoNuevo==="inversion"?"Inversión registrada correctamente":"Movimiento agregado correctamente"); setTab(tipoNuevo==="inversion"?"inversiones":"movimientos"); await cargar(); }
+    else {
+      setMontoNuevo(""); setDescripcionNueva(""); setDestinatarioNuevo(""); setCategoriaNueva(""); setCuentaNueva(""); setCuentaDestinoNueva("");
+      setNotice(esTransferencia?"Transferencia registrada correctamente":tipoNuevo==="inversion"?"Inversión registrada correctamente":"Movimiento agregado correctamente");
+      setTab(tipoNuevo==="inversion"?"inversiones":"movimientos"); await cargar();
+    }
   }
 
   function exportarCSV() {
-    const encabezado = "fecha,tipo,monto,moneda,categoria,destinatario,descripcion,estado";
+    const encabezado = "fecha,tipo,monto,moneda,categoria,destinatario,descripcion,estado,cuenta_origen,cuenta_destino";
     const esc = (v: unknown) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
     const filas = movimientos.map(m => [
       m.fecha, m.tipo, m.monto, m.moneda,
-      categorias.find(c => c.id === m.categoria_id)?.nombre ?? "", m.destinatario ?? "", m.descripcion ?? "", m.estado
+      categorias.find(c => c.id === m.categoria_id)?.nombre ?? "", m.destinatario ?? "", m.descripcion ?? "", m.estado,
+      cuentas.find(c => c.id === m.cuenta_origen_id)?.nombre ?? "", cuentas.find(c => c.id === m.cuenta_destino_id)?.nombre ?? ""
     ].map(esc).join(","));
     const blob = new Blob(["\uFEFF" + [encabezado, ...filas].join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);

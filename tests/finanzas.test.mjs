@@ -30,3 +30,16 @@ test("ningún movimiento devuelve cuatro cifras cero",()=>{
 test("no suma importes negativos, NaN, o cero por error",()=>{
   assert.equal(resumenFinanciero([movimiento("inversion",-5),movimiento("gasto","no-numero"),movimiento("ingreso",0)]).balanceDisponible,0);
 });
+
+test("saldo histórico no depende del período elegido para las estadísticas",()=>{
+  const historial = [
+    {...movimiento("ingreso",200000),fecha:"2026-10-15"},
+    {...movimiento("inversion",20000),fecha:"2026-10-20"},
+    {...movimiento("gasto",45000),fecha:"2026-11-02"},
+    {...movimiento("ingreso",10000),fecha:"2026-11-03"},
+    {...movimiento("gasto",8000,"pendiente_revision"),fecha:"2026-11-04"},
+  ];
+  const noviembre = historial.filter(m=>m.fecha.startsWith("2026-11"));
+  assert.equal(resumenFinanciero(historial).balanceDisponible,145000);
+  assert.equal(resumenFinanciero(noviembre).balanceDisponible,-35000);
+});

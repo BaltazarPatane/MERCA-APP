@@ -179,7 +179,7 @@ Se incluyen validación de importes, categorías activas según el tipo de movim
 
 Las categorías de **gastos, ingresos e inversiones** se pueden **crear, renombrar, activar y desactivar** sin perder movimientos históricos. Las billeteras y cuentas se pueden crear, renombrar, tipificar, desactivar y ajustar por saldo de apertura. El historial se conserva al desactivar una billetera. Se mantiene la exportación CSV, que ahora incluye las cuentas de origen y destino.
 
-**Atajos no cambia:** la nueva función smooth-handler v10, una vez desplegada en Supabase, puede detectar Mercado Pago como origen si el CUIL emisor corresponde al usuario autorizado. Los demás movimientos siguen en Sin asignar.
+**Atajos no cambia:** la función smooth-handler v11, una vez desplegada en Supabase, puede asignar la billetera de origen cuando la entidad está identificada en el comprobante y coincide con una única cuenta activa del usuario; de lo contrario se mantiene Sin asignar.
 
 ## Arquitectura del sistema
 
@@ -328,7 +328,7 @@ MERCA se diseñó para mantener **público el código** sin publicar los datos p
 - Se evita guardar archivos originales y texto OCR completo.
 - El identificador de operación permite detectar reenvíos y reducir la posibilidad de duplicados.
 
-La función admite varios usuarios mediante tokens privados independientes. Crear usuarios adicionales en Supabase no configura automáticamente sus Atajos ni la verificación del CUIL emisor para la billetera.
+La función admite varios usuarios mediante tokens privados independientes. No se requiere configurar CUIL, crear nuevos Secrets ni modificar el Atajo para identificar la billetera por su entidad de origen.
 
 ## Evolución del desarrollo
 
@@ -387,13 +387,13 @@ MERCA-APP/
 
 La versión actual cubre el flujo de **gastos enviados desde iPhone** y la administración de finanzas desde la web, pero conserva algunos límites importantes:
 
-- El reconocimiento automático está validado para **determinados formatos de comprobantes**, no para cualquier PDF bancario; la asociación automática de billetera se limita por ahora al formato de origen Mercado Pago verificado.
+- El reconocimiento automático está validado para **determinados formatos de comprobantes**, no para cualquier PDF bancario; la asociación automática exige datos explícitos de la entidad emisora y una cuenta activa coincidente.
 - Si el importe, fecha o estructura son ambiguos, el sistema puede requerir revisión o rechazar la solicitud.
 - La exportación CSV utiliza el historial cargado por páginas desde Supabase; **no equivale a un respaldo integral de PostgreSQL**.
 - No hay restauración automatizada de respaldos; la carga de movimientos sí utiliza paginación.
 - Inversiones registra **aportes**, no valor de mercado, ganancias, dividendos, rentabilidad o rescates automáticos.
 - El balance del período es un flujo. El dinero total disponible incluye saldos de apertura y movimientos confirmados, pero **no está sincronizado automáticamente con bancos**.
-- Las billeteras se administran manualmente; tras publicar `smooth-handler` v10, los comprobantes compatibles de Mercado Pago pueden asignarse automáticamente si coinciden el CUIL privado, el origen y una única cuenta activa del usuario. Los demás siguen Sin asignar.
+- Las billeteras se administran manualmente; tras publicar `smooth-handler` v11, los comprobantes con entidad financiera de origen explícita pueden asignarse automáticamente a una única cuenta activa con el mismo nombre. Los demás siguen Sin asignar.
 - Para activar **Inversiones** en una base de datos existente es necesario ejecutar [la migración SQL](supabase/migrations/20261020_inversiones.sql), que amplía los tipos permitidos sin borrar registros. **No se ejecuta automáticamente desde GitHub ni Cloudflare.**
 - El frontend se despliega desde GitHub, pero la ingesta de comprobantes requiere desplegar y configurar la Edge Function de manera independiente.
 

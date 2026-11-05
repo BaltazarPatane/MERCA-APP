@@ -1,75 +1,64 @@
-# Recepción de comprobantes — MERCA
+# Recepción de comprobantes desde Atajos — MERCA
 
-Esta es la integración vigente de **Atajos iOS** con la Edge Function de Supabase **`smooth-handler`**. El código completo de la versión propuesta **v10** se encuentra en [`supabase/functions/smooth-handler/index.ts`](../supabase/functions/smooth-handler/index.ts). **Subir archivos a GitHub no publica automáticamente esta función en Supabase:** se debe desplegar por separado.
+MERCA recibe comprobantes en la Edge Function **`smooth-handler`** de Supabase. El código completo de la función se versiona en [`supabase/functions/smooth-handler/index.ts`](../supabase/functions/smooth-handler/index.ts).
 
-## Comportamiento que se conserva
+**Importante:** los cambios de GitHub no despliegan automáticamente las Edge Functions. El usuario debe actualizar `smooth-handler` desde Supabase.
 
-- Todo comprobante recibido desde Atajos se registra como **gasto**. Los ingresos y las transferencias internas se siguen creando manualmente desde MERCA.
-- El Atajo sigue enviando el mismo JSON: `{"texto_ocr":"...","categoria":"..."}`.
-- El Atajo sigue usando **la misma URL existente** terminada en `/functions/v1/smooth-handler` y su `x-merca-token` personal.
-- Se preservan los titulares y usuarios múltiples, la extracción de importe/fecha/destinatario, los estados `confirmado` / `pendiente_revision`, y la protección frente a duplicados.
-- No se guardan imágenes, PDF ni texto OCR completo. No se suben secretos al repositorio público.
+## Qué conserva la versión v11
 
-## Mejora v10: billetera de origen (solo Mercado Pago verificado)
+- Se mantiene la URL `/functions/v1/smooth-handler`, el token `x-merca-token` y el mismo JSON de Atajos: `{"texto_ocr":"...","categoria":"..."}`.
+- No se cambia ni se crea ningún Secret, ni se solicita CUIL o identidad adicional.
+- Se respetan los tokens independientes para varios usuarios y el procesamiento actual de importes, fechas, destinatarios y duplicados.
+- Todos los comprobantes que llegan desde Atajos continúan siendo **gastos**. Las transferencias internas entre billeteras propias se siguen creando desde la web.
+- No se almacenan PDFs, imágenes ni OCR completo en la base de datos.
 
-La función examina la sección **Origen y destino** en comprobantes de pago y transferencia de Mercado Pago. Solo asigna la billetera si cumple **todos** los requisitos:
+## Cómo identifica la billetera automáticamente
 
-1. El comprobante contiene estructura reconocida y número oficial de operación de Mercado Pago.
-2. El origen muestra un CUIL válido de 11 dígitos y la institución **Mercado Pago** en el bloque de quien envió fondos (no en el destino).
-3. El CUIL del emisor coincide con el CUIL **autorizado para el usuario de Atajos**, guardado en un Secret del backend.
-4. El usuario posee **una sola cuenta activa** cuyo nombre normalizado es exactamente `Mercado Pago`.
-5. No aparecen indicadores de tarjeta, crédito, débito o cuotas, que impedirían deducir la fuente real de fondos.
+1. Busca la entidad financiera **del origen** indicada de forma explícita (`Origen`, `Billetera de origen` o el primer bloque de `Origen y destino` en los formatos compatibles).
+2. Reconoce nombres de entidades como **Mercado Pago, Ualá, Prex, Brubank, Naranja X, Cuenta DNI, Personal Pay y bancos con nombre explícito**, entre otros incluidos en el extractor.
+3. Consulta exclusivamente las cuentas del **usuario autenticado con su token de Atajos** y busca una coincidencia de nombre exacta (ignorando mayúsculas, tildes y espacios repetidos).
+4. Solo asigna `cuenta_origen_id` cuando la coincidencia es única y la cuenta está activa.
+5. Si no se identifica un origen, hay dos coincidencias, el nombre de la cuenta es diferente o el comprobante menciona tarjeta, crédito, débito o cuotas, **se guarda el gasto sin billetera asignada**.
 
-Si algo falta o es ambiguo, el movimiento se registra normalmente **sin asignar billetera**. La función **nunca asigna por ver el logo o el nombre de Mercado Pago en el destino**. No consulta ni altera las billeteras de otros usuarios.
+La función **no usa la entidad del destino** para decidir el origen ni deduce una billetera a partir del logo de un comprobante. Tampoco comprueba que el emisor sea el propietario: registra la fuente documental que aparece en el comprobante.
 
-La mejora clasifica la **billetera de origen**, no el tipo de movimiento. Una transferencia enviada desde Atajos continúa siendo `gasto` según la regla preexistente; una transferencia entre cuentas propias debe cargarse manualmente desde MERCA para que no se contabilice como gasto.
+Ejemplos:
 
-### Nuevo Secret privado (necesario para asignación automática)
+| Origen documentado | Destino | Billetera en MERCA |
+| --- | --- | --- |
+| Mercado Pago | Grido | Mercado Pago, si existe una única billetera activa con ese nombre |
+| Banco Provincia | Mercado Pago | Banco Provincia, si existe una cuenta con ese nombre |
+| No especificado | Mercado Pago | Sin asignar |
+| Origen ambiguo o múltiples fuentes | Cualquier destino | Sin asignar |
 
-Ir a **Supabase → Edge Functions → Secrets** y agregar:
+### Compatibilidad y precauciones
 
-- **Key:** `MERCA_CUILS_POR_USUARIO`
-- **Value:** JSON válido con una entrada por usuario que autorice la detección. Ejemplo con datos ficticios:
+Que un comprobante haya sido generado por Mercado Pago no implica que se haya financiado desde el saldo de esa billetera. Por ese motivo se ignoran las referencias a tarjetas y financiación detectables. Si el comprobante **no informa** el medio real utilizado, no existe una garantía absoluta de que se pueda deducir correctamente; los saldos siempre podrán corregirse manualmente.
 
-```json
-{
-  "UUID_DE_AUTHENTICATION_DEL_PRIMER_USUARIO": "CUIL_DE_11_DIGITOS",
-  "UUID_DE_AUTHENTICATION_DEL_SEGUNDO_USUARIO": "OTRO_CUIL_DE_11_DIGITOS"
-}
-```
+Los comprobantes **ya registrados** no cambian ni se duplican cuando vuelven a compartirse; cualquier billetera previamente elegida manualmente se conserva.
 
-Reemplazar los identificadores ficticios por los **UUID reales de Authentication → Users** (formato UUID con guiones) y los CUIL propios de 11 dígitos (sin guiones ni espacios), vistos en los comprobantes. La aplicación empareja el usuario mediante su token secreto anterior; **no se envían CUIL ni UUID desde Atajos**.
+No es necesario cambiar el SQL, las tablas de Supabase, el Atajo, Cloudflare, ni los Secrets existentes.
 
-Si solo un usuario utiliza la función, dejar una sola entrada en el JSON. No crear ni modificar `MERCA_INGEST_USERS` por esta mejora: conservar exactamente los tokens actuales. No revelar ni compartir el JSON con nadie y no agregarlo al repositorio.
+## Cómo desplegar en Supabase
 
-Si el Secret no está configurado, es inválido o no incluye al usuario, **todo sigue funcionando**; los comprobantes se registran con cuenta Sin asignar.
+1. En MERCA → Ajustes → Billeteras y cuentas, comprobar que exista una única cuenta activa cuyo **nombre coincida con el que figura como origen en el comprobante**, por ejemplo `Mercado Pago`.
+2. Abrir <https://supabase.com/dashboard>, seleccionar el proyecto de MERCA y entrar a **Edge Functions** → **smooth-handler**.
+3. Antes de editar, guardar una copia de seguridad del `index.ts` actual; revisar si tiene ajustes posteriores a la versión de referencia utilizada.
+4. Abrir **Code** → **index.ts** de esa misma función.
+5. Copiar el contenido **completo** de [la versión actual de GitHub](../supabase/functions/smooth-handler/index.ts) y reemplazar el código anterior.
+6. Presionar **Deploy updates**. Mantener la misma configuración de verificación JWT y los mismos Secrets con los que funcionan los Atajos actuales.
+7. Enviar un **comprobante nuevo** desde el Atajo y comprobar en MERCA → Movimientos que el campo de billetera se completó con la entidad emisora.
+8. Probar un comprobante sin institución de origen identificable: debe guardarse como gasto **Sin asignar**.
+9. Si hubiera un problema, restaurar la copia del código anterior en la misma función y volver a presionar **Deploy updates**.
 
-### Despliegue desde el Dashboard — procedimiento seguro
+La función se basa en la última versión multiusuario conocida de MERCA, no en una lectura en vivo del código desplegado en Supabase. Comparar cualquier ajuste manual posterior antes de reemplazarla.
 
-1. Verificar que tus billeteras ya estén creadas en **MERCA → Ajustes → Billeteras y cuentas**, con una única billetera **Mercado Pago**, activa, para cada usuario.
-2. Abrir el [Dashboard de Supabase](https://supabase.com/dashboard) → proyecto de MERCA → **Edge Functions** → función existente **smooth-handler**.
-3. Antes de editar, usar **Download** para hacer una copia local de la versión que funciona. Conservar también las configuraciones actuales de verificación JWT y los Secrets.
-4. En **Edge Functions → Secrets**, guardar `MERCA_CUILS_POR_USUARIO` siguiendo el formato indicado más arriba. No tocar los secretos actuales.
-5. Abrir la pestaña **Code** de `smooth-handler` y seleccionar el archivo principal `index.ts`. **Reemplazar todo su contenido** por el del archivo versionado [`index.ts`](../supabase/functions/smooth-handler/index.ts); no pegar solo fragmentos.
-6. Hacer clic en **Deploy updates** de **esa misma función**. No crear otra función ni cambiar la URL del Atajo. Mantener la misma configuración de autenticación JWT que ya funcionaba con `x-merca-token`.
-7. Comprobar que el despliegue se completó. Con un comprobante nuevo (no uno ya registrado) de Mercado Pago, compartir desde Atajos y verificar en MERCA → Movimientos que la **billetera** quedó Mercado Pago; después verificar el saldo de esa cuenta en Inicio.
-8. Probar un comprobante no reconocido o con datos ambiguos: debe registrarse sin billetera, sin perder importe, fecha ni categoría. Verificar también una carga desde el Atajo del segundo usuario, si existe.
-9. Si aparece un problema, recuperar el `index.ts` descargado del paso 3 y usar **Deploy updates**. Esto restaura el receptor anterior; la modificación de datos que haya ocurrido en comprobantes nuevos deberá revisarse desde MERCA si corresponde.
+## Respuestas de Atajos
 
-**Atención:** el código v10 se construyó desde la última versión multiusuario conservada en los archivos del proyecto. No hay acceso de lectura al contenido efectivo de la función que tenés desplegada hoy. Si hiciste modificaciones manuales posteriores, compará esas diferencias antes de sobrescribirla.
-
-## Validación y duplicados
-
-La detección de billetera se aplica **a comprobantes nuevos**. Un comprobante con la misma referencia externa que otro existente sigue sin duplicarse ni cambiar su cuenta asignada; se conserva la mejora anterior del destinatario si resulta más informativo.
-
-Pruebas automáticas con documentos sintéticos que reproducen el formato de nuestros ejemplos se ejecutan con `npm test` desde GitHub; no contienen titulares reales, CUIL personales ni tokens privados.
-
-## Mensajes que conserva Atajos
-
-| Respuesta | Resultado |
+| Respuesta | Significado |
 | --- | --- |
-| `Movimiento cargado exitosamente` | Guardado confirmado o comprobante previamente confirmado. |
-| `Transacción a confirmar` | Guardado en estado pendiente de revisión. |
-| `Error al cargar el movimiento` | No se pudo registrar válidamente. |
+| `Movimiento cargado exitosamente` | Guardado confirmado o duplicado ya confirmado |
+| `Transacción a confirmar` | Guardado para revisión |
+| `Error al cargar el movimiento` | No se pudo guardar |
 
-La detección de billetera no cambia esos mensajes ni requiere acciones nuevas en el Atajo.
+Estos mensajes permanecen sin cambios.

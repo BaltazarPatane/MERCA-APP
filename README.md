@@ -43,11 +43,11 @@ La solución aprovecha servicios con opciones gratuitas, evita depender de Whats
 | **Inversiones manuales** | Aportes con categorías independientes, activo/plataforma, cuenta de origen opcional e historial exclusivo. |
 | **Validación y duplicados** | Comprobación de datos, referencias de operación y huellas de texto para evitar altas repetidas. |
 | **Revisión excepcional** | Operaciones con datos insuficientes o formatos no confiables requieren intervención desde la web. |
-| **Inicio** | Cuatro indicadores: ingresos, gastos, inversiones y **balance disponible**; gráficos de gastos, evolución mensual y últimos movimientos. |
-| **Movimientos** | Historial de gastos e ingresos, con filtros, búsqueda por destinatario, edición y revisión de pendientes. |
-| **Inversiones** | Pantalla propia con filtros por período, categoría y estado, búsqueda de instrumentos, capital aportado y distribución por categoría. |
-| **Nuevo movimiento** | Carga manual de **ingresos, gastos o inversiones**, con fecha, categoría, importe y cuenta opcional. |
-| **Ajustes** | Administración independiente de categorías de ingresos, gastos e inversiones; consulta de cuentas y exportación CSV. |
+| **Inicio** | Dinero total disponible y desglose por billetera, además de gastos, ingresos, inversiones y balance del período; gráficos y últimos movimientos. |
+| **Movimientos** | Historial de gastos, ingresos y transferencias internas, con filtro por billetera, destinatario, estado y período, más edición y revisión. |
+| **Inversiones** | Pantalla propia con filtros por período, categoría, billetera y estado, búsqueda de instrumentos y capital aportado. |
+| **Nuevo movimiento** | Carga manual de **ingresos, gastos, inversiones y transferencias**; billetera de origen/destino y categoría según corresponda. |
+| **Ajustes** | Administración de categorías y billeteras, saldos de apertura, activación/desactivación y exportación CSV con cuentas. |
 | **Acceso** | Inicio de sesión mediante Supabase Authentication y separación de información por usuario. |
 | **Interfaz** | Diseño responsive en modo oscuro, favicon y acceso directo desde la pantalla de inicio del iPhone. |
 
@@ -106,24 +106,26 @@ La aplicación dispone de **cinco pestañas**. El estilo visual se construyó co
 
 ![Inicio de MERCA con cuatro indicadores — representación con datos ficticios](docs/img/ejemplo-inicio.svg)
 
-La pantalla principal concentra cuatro indicadores para el período seleccionado: **gastos de consumo, ingresos, inversiones realizadas y balance disponible**. También ofrece un gráfico circular de gastos por categoría, evolución mensual de gastos confirmados y últimos movimientos.
+La pantalla principal concentra cuatro indicadores para el período seleccionado: **gastos de consumo, ingresos, inversiones realizadas y balance del período**. Por separado, se muestra el **dinero total disponible** sin filtros temporales, distribuido por billeteras y por operaciones sin asignar. También ofrece gráficos y últimos movimientos.
 
 Los importes del sistema se calculan con los registros consultados desde Supabase; **los movimientos pendientes y descartados no modifican el balance**. Las inversiones se contabilizan por separado y **no aparecen en el gráfico de gastos de consumo**.
 
 Los filtros permiten consultar un **mes, día, rango de fechas o todo el historial**. También es posible acceder desde Inicio a los movimientos pendientes.
 
-### Cálculo del balance disponible
+### Balance del período y dinero disponible
 
-El balance representa el flujo disponible del período seleccionado, no el saldo real de una cuenta bancaria ni el patrimonio acumulado:
+El **balance del período** representa el flujo neto para las fechas seleccionadas (no el patrimonio):
 
-**Balance disponible = ingresos confirmados − gastos confirmados − inversiones confirmadas**
+**Balance del período = ingresos confirmados − gastos confirmados − inversiones confirmadas**
+
+El **dinero total disponible** se calcula sobre **todo el historial**, sin filtros, y además contempla los **saldos de apertura** que el usuario configure en sus billeteras. Las transferencias entre billeteras propias modifican la distribución pero no el total. Los registros históricos que todavía no tienen cuenta se muestran en **Sin asignar**.
 
 | Ejemplo ilustrativo (octubre de 2026) | Importe |
 | --- | ---: |
 | Ingresos | $450.000 |
 | Gastos de consumo | −$110.500 |
 | Aportes a inversiones | −$95.000 |
-| **Balance disponible** | **$244.500** |
+| **Balance del período** | **$244.500** |
 
 Las transferencias entre cuentas propias no se cuentan como ingresos o gastos del conjunto. Una inversión se resta cuando queda **Confirmada**; si está pendiente o descartada, no afecta el cálculo.
 
@@ -167,17 +169,17 @@ Para el esquema de datos y el procedimiento de activación consultá la [documen
 
 ![Formulario de MERCA con tipo Inversión seleccionado y datos ficticios](docs/img/ejemplo-nuevo-movimiento.svg)
 
-El formulario permite registrar **gastos, ingresos e inversiones** mediante un selector de tres opciones. Comparten importe en pesos argentinos, fecha, categoría propia del tipo seleccionado y descripción opcional. Los gastos admiten destinatario o comercio; las inversiones, activo, instrumento o plataforma. Cuando existen cuentas configuradas, se puede asociar una cuenta de origen (gasto o inversión) o de destino (ingreso).
+El formulario permite registrar **gastos, ingresos, inversiones y transferencias entre billeteras propias**. Gastos, ingresos e inversiones conservan sus categorías independientes; las transferencias no usan categoría y requieren origen y destino diferentes. En los demás movimientos se puede elegir billetera manualmente o dejarlos sin asignar. Gastos e inversiones conservan sus respectivos campos de destinatario/activo.
 
 Se incluyen validación de importes, categorías activas según el tipo de movimiento y un botón para limpiar el formulario. Las operaciones manuales se crean **confirmadas**.
 
-### Ajustes — Categorías y respaldo
+### Ajustes — Categorías, billeteras y respaldo
 
 ![Ajustes con categorías de inversión y cuentas ficticias](docs/img/ejemplo-ajustes.svg)
 
-Las categorías de **gastos, ingresos e inversiones** se pueden **crear, renombrar, activar y desactivar** sin eliminar los movimientos históricos que las utilizan. También se muestran las cuentas existentes en modo consulta, la identidad de la sesión y la exportación de movimientos a **CSV**, compatible con herramientas como Excel.
+Las categorías de **gastos, ingresos e inversiones** se pueden **crear, renombrar, activar y desactivar** sin perder movimientos históricos. Las billeteras y cuentas se pueden crear, renombrar, tipificar, desactivar y ajustar por saldo de apertura. El historial se conserva al desactivar una billetera. Se mantiene la exportación CSV, que ahora incluye las cuentas de origen y destino.
 
-La creación o administración de cuentas bancarias desde esta pantalla **no está implementada**; su visualización y la selección opcional en formularios sí lo están.
+**Atajos sigue funcionando sin modificaciones:** los gastos recibidos no reciben billetera automática y podrán asignarse manualmente desde Editar hasta que incorporemos esa integración.
 
 ## Arquitectura del sistema
 
@@ -222,7 +224,7 @@ La información principal se distribuye en tres tablas:
 | Tabla | Datos relevantes |
 | --- | --- |
 | `categorias` | Usuario, nombre, tipo (`gasto`, `ingreso`, `inversion`), color y estado activo. |
-| `cuentas` | Usuario, nombre, tipo de cuenta, moneda y estado. |
+| `cuentas` | Usuario, nombre, tipo de billetera, moneda, estado y `saldo_inicial`. |
 | `movimientos` | Usuario, tipo (`gasto`, `ingreso`, `inversion` y transferencias existentes), importe, fecha, hora, categoría, cuentas asociadas, destinatario, descripción, origen, referencia y estado. |
 
 Los movimientos admiten los estados `confirmado`, `pendiente_revision` y `descartado`. Las categorías de inversiones pertenecen a un tipo distinto y no se mezclan con las de ingresos o gastos. La base de datos utiliza claves foráneas y políticas RLS para evitar que un usuario consulte o modifique registros ajenos.
@@ -271,13 +273,17 @@ npm run preview
 
 Las pruebas comprueban que **inversiones y gastos no se contabilicen dos veces**, que pendientes y descartados no alteren el balance y que las transferencias entre cuentas propias no afecten el disponible agregado.
 
-> El repositorio incluye la aplicación web y **migraciones para `destinatario` e `inversiones`**, pero **no incluye una instalación automatizada del esquema completo de PostgreSQL ni el despliegue completo de la Edge Function**. Para replicar toda la solución es necesario configurar esos componentes en un proyecto Supabase propio.
+> El repositorio incluye la aplicación web y **migraciones para `destinatario`, `inversiones` y `billeteras`**, pero **no incluye una instalación automatizada del esquema completo de PostgreSQL ni el despliegue completo de la Edge Function**. Para replicar toda la solución es necesario configurar esos componentes en un proyecto Supabase propio.
 
 ### 2. Activar Inversiones en Supabase
 
 Antes de registrar aportes en una instalación existente, abrir **Supabase → SQL Editor**, copiar y ejecutar íntegramente [la migración `20261020_inversiones.sql`](supabase/migrations/20261020_inversiones.sql) y verificar que se hayan habilitado los tipos de inversión en `categorias` y `movimientos`.
 
 La migración conserva registros anteriores, claves foráneas y políticas RLS; si encuentra restricciones no previstas se revierte. **Si todavía no se ejecutó, el formulario web de inversiones puede aparecer, pero Supabase rechazará su creación.** Consultar el [procedimiento detallado](docs/inversiones.md).
+
+### 3. Activar billeteras manuales
+
+Ejecutar en **Supabase → SQL Editor** la [migración de billeteras](supabase/migrations/20261105_billeteras_manuales.sql). Añade un saldo de apertura a `cuentas`, políticas RLS propias y validación de que las cuentas vinculadas a movimientos pertenezcan al mismo usuario. No elimina registros antiguos. Seguir los [pasos de configuración y conciliación](docs/billeteras.md).
 
 ### 3. Publicar en Cloudflare Pages
 
@@ -383,11 +389,11 @@ La versión actual cubre el flujo de **gastos enviados desde iPhone** y la admin
 
 - El reconocimiento automático está validado para **determinados formatos de comprobantes**, no para cualquier PDF bancario.
 - Si el importe, fecha o estructura son ambiguos, el sistema puede requerir revisión o rechazar la solicitud.
-- La exportación CSV utiliza los movimientos cargados en la sesión; la consulta solicita hasta **3000 registros** y el límite efectivo puede depender de la configuración de Supabase. **No equivale a un sistema de backup integral**.
-- No hay restauración de respaldos ni paginación histórica completa.
+- La exportación CSV utiliza el historial cargado por páginas desde Supabase; **no equivale a un respaldo integral de PostgreSQL**.
+- No hay restauración automatizada de respaldos; la carga de movimientos sí utiliza paginación.
 - Inversiones registra **aportes**, no valor de mercado, ganancias, dividendos, rentabilidad o rescates automáticos.
-- El balance disponible es un resultado por período, **no un saldo bancario conciliado ni el patrimonio total**.
-- Las cuentas pueden mostrarse y asociarse a movimientos manuales; todavía no existe administración completa de cuentas desde la web.
+- El balance del período es un flujo. El dinero total disponible incluye saldos de apertura y movimientos confirmados, pero **no está sincronizado automáticamente con bancos**.
+- Las billeteras se administran manualmente; los comprobantes enviados desde Atajos se conservan sin billetera hasta que el usuario la asigne.
 - Para activar **Inversiones** en una base de datos existente es necesario ejecutar [la migración SQL](supabase/migrations/20261020_inversiones.sql), que amplía los tipos permitidos sin borrar registros. **No se ejecuta automáticamente desde GitHub ni Cloudflare.**
 - El frontend se despliega desde GitHub, pero la ingesta de comprobantes requiere desplegar y configurar la Edge Function de manera independiente.
 

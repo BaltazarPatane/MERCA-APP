@@ -13,6 +13,16 @@ export type Movimiento = {
   cuenta_destino_id?: string | null;
 };
 
+export type Cuenta = {
+  id: string;
+  nombre: string;
+  tipo: string;
+  moneda: string;
+  activa: boolean;
+  // PostgreSQL numeric(15,2) se devuelve como string en algunas consultas.
+  saldo_inicial: number | string;
+};
+
 export type Categoria = {
   id: string;
   nombre: string;

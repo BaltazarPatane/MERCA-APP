@@ -125,6 +125,14 @@ test("el Mercado Pago del destinatario jamás se toma como origen", () => {
   assert.equal(hooks.identificarOrigenMercadoPago(pago),null);
 });
 
+test("una transferencia MP saliente utiliza el mismo reconocimiento del origen", async () => {
+  const s=servidor({cuentas:[cuenta("mp-cuenta")]});
+  assert.equal((await s.enviar(pdfMercadoPago({etiqueta:"Comprobante de transferencia"}))).status,200);
+  assert.equal(s.base.movimientos[0].cuenta_origen_id,"mp-cuenta");
+  // Regla preexistente de Atajos: sigue siendo gasto, no transferencia interna.
+  assert.equal(s.base.movimientos[0].tipo,"gasto");
+});
+
 test("tarjetas y financiación hacen que el origen quede sin asignar", () => {
   const {hooks} = servidor();
   for(const extra of ["Medio de pago: Tarjeta Visa", "Tarjeta de crédito", "Pago con débito", "6 cuotas"]) {
@@ -135,7 +143,7 @@ test("tarjetas y financiación hacen que el origen quede sin asignar", () => {
 test("no adivina billeteras a partir de logos, emisores ni formatos incompletos", () => {
   const {hooks} = servidor();
   assert.equal(hooks.identificarOrigenMercadoPago("Mercado Pago\nComprobante de pago\n$ 100"),null);
-  assert.equal(hooks.identificarOrigenMercadoPago(pdfMercadoPago({etiqueta:"Comprobante de transferencia"})),null);
+  assert.equal(hooks.identificarOrigenMercadoPago(pdfMercadoPago({etiqueta:"Recibo de compra"})),null);
   assert.equal(hooks.identificarOrigenMercadoPago(pdfMercadoPago().replace("CUIL:", "CBU:")),null);
 });
 

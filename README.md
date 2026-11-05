@@ -58,7 +58,7 @@ El recorrido de un comprobante es el siguiente:
 1. Se obtiene un comprobante de pago o transferencia en el iPhone.
 2. Desde **Compartir**, se ejecuta el atajo de MERCA.
 3. El atajo obtiene el texto del **PDF** o extrae texto de una **imagen** y permite elegir la categoría.
-4. Se envía una solicitud HTTPS a la **Supabase Edge Function** `merca-recibir`.
+4. Se envía una solicitud HTTPS a la **Supabase Edge Function** `smooth-handler`.
 5. El servidor interpreta y valida la información, busca duplicados y, cuando corresponde, registra el movimiento en PostgreSQL.
 6. La aplicación web consulta los movimientos mediante Supabase y los incorpora al historial, los filtros y las estadísticas.
 
@@ -179,7 +179,7 @@ Se incluyen validación de importes, categorías activas según el tipo de movim
 
 Las categorías de **gastos, ingresos e inversiones** se pueden **crear, renombrar, activar y desactivar** sin perder movimientos históricos. Las billeteras y cuentas se pueden crear, renombrar, tipificar, desactivar y ajustar por saldo de apertura. El historial se conserva al desactivar una billetera. Se mantiene la exportación CSV, que ahora incluye las cuentas de origen y destino.
 
-**Atajos sigue funcionando sin modificaciones:** los gastos recibidos no reciben billetera automática y podrán asignarse manualmente desde Editar hasta que incorporemos esa integración.
+**Atajos no cambia:** la nueva función smooth-handler v10, una vez desplegada en Supabase, puede detectar Mercado Pago como origen si el CUIL emisor corresponde al usuario autorizado. Los demás movimientos siguen en Sin asignar.
 
 ## Arquitectura del sistema
 
@@ -191,7 +191,7 @@ flowchart TB
       A["iPhone · Atajos"] 
       W["Web responsive · PC / iPhone"]
     end
-    A -->|"POST + x-merca-token"| E["Edge Function merca-recibir"]
+    A -->|"POST + x-merca-token"| E["Edge Function smooth-handler"]
     E -->|"Inserción y control de duplicados"| DB[("Supabase PostgreSQL")]
     W -->|"Login"| AUTH["Supabase Authentication"]
     W -->|"Consultas bajo RLS"| DB
@@ -311,7 +311,7 @@ El atajo de uso personal recibe contenido desde el menú **Compartir** de iOS, o
 }
 ```
 
-a la función HTTPS `merca-recibir`. La autenticación se realiza mediante el encabezado `x-merca-token`, cuyo valor debe coincidir con un secreto configurado exclusivamente en el backend.
+a la función HTTPS `smooth-handler`. La autenticación se realiza mediante el encabezado `x-merca-token`, cuyo valor debe coincidir con un secreto configurado exclusivamente en el backend.
 
 Los **secretos administrativos, el token del atajo y cualquier clave de servicio** no deben incorporarse al frontend ni subirse a GitHub.
 

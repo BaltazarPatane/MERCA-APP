@@ -338,13 +338,16 @@ export default function App() {
         {tab === "inicio" && <InicioPanel
           movimientos={movimientos}
           categorias={categorias}
+          cuentas={cuentas}
           periodo={periodo} mes={mes} dia={dia} desde={desde} hasta={hasta}
           onPeriodo={setPeriodo} onMes={setMes} onDia={setDia} onDesde={setDesde} onHasta={setHasta}
           onAgregar={() => setTab("agregar")}
+          onCuentas={() => setTab("ajustes")}
           onHistorial={(pendientes=false) => {
             setTab("movimientos");
             setFiltroEstado(pendientes ? "pendiente_revision" : "todos");
             setBusquedaDestinatario("");
+            setFiltroCuenta("todas");
             if (pendientes) setPeriodo("todo");
           }}
         />}
@@ -360,6 +363,7 @@ export default function App() {
             hasta={hasta}
             filtroEstado={filtroEstado}
             busquedaDestinatario={busquedaDestinatario}
+            filtroCuenta={filtroCuenta}
             busy={busy}
             onPeriodo={setPeriodo}
             onMes={setMes}
@@ -368,6 +372,7 @@ export default function App() {
             onHasta={setHasta}
             onEstado={setFiltroEstado}
             onBusqueda={setBusquedaDestinatario}
+            onCuenta={setFiltroCuenta}
             onLimpiar={() => {
               setPeriodo("mes");
               setMes(mesHoy());
@@ -376,6 +381,7 @@ export default function App() {
               setHasta(fechaHoy());
               setFiltroEstado("todos");
               setBusquedaDestinatario("");
+              setFiltroCuenta("todas");
             }}
             onEditar={setEditando}
             onCambiarEstado={(id, estado) => void actualizarEstado(id, estado)}
@@ -384,18 +390,19 @@ export default function App() {
         {tab === "inversiones" && <InversionesPanel movimientos={movimientos} categorias={categorias} cuentas={cuentas} busy={busy} onEditar={setEditando} onCambiarEstado={(id,estado)=>void actualizarEstado(id,estado)} onAgregar={()=>{setTipoNuevo("inversion");setCategoriaNueva("");setCuentaNueva("");setTab("agregar");}} />}
         {tab === "agregar" && <NuevoMovimientoPanel
           tipo={tipoNuevo} monto={montoNuevo} fecha={fechaNueva} categoriaId={categoriaNueva}
-          cuentaId={cuentaNueva} destinatario={destinatarioNuevo} descripcion={descripcionNueva}
+          cuentaId={cuentaNueva} cuentaDestinoId={cuentaDestinoNueva} destinatario={destinatarioNuevo} descripcion={descripcionNueva}
           categorias={categorias} cuentas={cuentas.filter(c=>c.activa!==false)} busy={busy}
-          onTipo={tipo => { setTipoNuevo(tipo); setCategoriaNueva(""); setCuentaNueva(""); }}
+          onTipo={tipo => { setTipoNuevo(tipo); setCategoriaNueva(""); setCuentaNueva(""); setCuentaDestinoNueva(""); }}
           onMonto={setMontoNuevo} onFecha={setFechaNueva} onCategoria={setCategoriaNueva}
-          onCuenta={setCuentaNueva} onDestinatario={setDestinatarioNuevo} onDescripcion={setDescripcionNueva}
+          onCuenta={setCuentaNueva} onCuentaDestino={setCuentaDestinoNueva} onDestinatario={setDestinatarioNuevo} onDescripcion={setDescripcionNueva}
           onGuardar={agregar}
-          onLimpiar={() => { setMontoNuevo(""); setFechaNueva(fechaHoy()); setCuentaNueva(""); setCategoriaNueva(""); setDestinatarioNuevo(""); setDescripcionNueva(""); setError(""); }}
+          onLimpiar={() => { setMontoNuevo(""); setFechaNueva(fechaHoy()); setCuentaNueva(""); setCuentaDestinoNueva(""); setCategoriaNueva(""); setDestinatarioNuevo(""); setDescripcionNueva(""); setError(""); }}
           onCategorias={() => setTab("ajustes")}
+          onCuentas={() => setTab("ajustes")}
         />}
         {tab === "ajustes" && <AjustesPanel
           userId={session.user.id} email={session.user.email || ""}
-          categorias={categorias} cuentas={cuentas}
+          categorias={categorias} cuentas={cuentas} movimientos={movimientos} cuentasDisponibles={cuentasDisponibles}
           onReload={cargar} onError={setError} onNotice={setNotice}
           onExportar={exportarCSV}
         />}

@@ -39,6 +39,7 @@ type Props = {
   hasta: string;
   filtroEstado: string;
   busquedaDestinatario: string;
+  filtroCuenta: string;
   busy: boolean;
   onPeriodo: (v: string) => void;
   onMes: (v: string) => void;
@@ -47,6 +48,7 @@ type Props = {
   onHasta: (v: string) => void;
   onEstado: (v: string) => void;
   onBusqueda: (v: string) => void;
+  onCuenta: (v: string) => void;
   onLimpiar: () => void;
   onEditar: (movimiento: Movimiento) => void;
   onCambiarEstado: (id: string, estado: "confirmado" | "descartado") => void;
@@ -116,6 +118,7 @@ export default function MovimientosPanel({
   hasta,
   filtroEstado,
   busquedaDestinatario,
+  filtroCuenta,
   busy,
   onPeriodo,
   onMes,
@@ -124,6 +127,7 @@ export default function MovimientosPanel({
   onHasta,
   onEstado,
   onBusqueda,
+  onCuenta,
   onLimpiar,
   onEditar,
   onCambiarEstado,
@@ -134,7 +138,8 @@ export default function MovimientosPanel({
     periodo !== "mes" ||
     mes !== new Date().toLocaleDateString("en-CA").slice(0, 7) ||
     filtroEstado !== "todos" ||
-    busquedaDestinatario.trim() !== "";
+    busquedaDestinatario.trim() !== "" ||
+    filtroCuenta !== "todas";
 
   return (
     <div className="mv-screen">
@@ -207,6 +212,18 @@ export default function MovimientosPanel({
               <ChevronDown className="mv-chevron" size={16} aria-hidden="true" />
             </span>
           </label>
+          <label className="mv-field">
+            <span>Billetera</span>
+            <span className="mv-control mv-select">
+              <Wallet size={17} aria-hidden="true"/>
+              <select value={filtroCuenta} onChange={e => onCuenta(e.target.value)}>
+                <option value="todas">Todas las billeteras</option>
+                <option value="sin_asignar">Sin asignar</option>
+                {cuentas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+              <ChevronDown className="mv-chevron" size={16} aria-hidden="true"/>
+            </span>
+          </label>
           <label className="mv-field mv-recipient-filter">
             <span>Buscar destinatario</span>
             <span className="mv-control mv-search">
@@ -250,7 +267,10 @@ export default function MovimientosPanel({
               const Icono = iconoCategoria(categoria, m.tipo);
               const estilo = estiloCategoria(categoria, m.tipo);
               const idCuenta = m.tipo === "ingreso" ? m.cuenta_destino_id : m.cuenta_origen_id;
-              const nombreCuenta = idCuenta ? cuentasPorId.get(idCuenta) || "Cuenta no disponible" : "No asignada";
+              const origenCuenta = m.cuenta_origen_id ? (cuentasPorId.get(m.cuenta_origen_id) || "Cuenta no disponible") : "Sin asignar";
+              const destinoCuenta = m.cuenta_destino_id ? (cuentasPorId.get(m.cuenta_destino_id) || "Cuenta no disponible") : "Sin asignar";
+              const nombreCuenta = m.tipo === "transferencia" ? origenCuenta + " → " + destinoCuenta
+                : idCuenta ? cuentasPorId.get(idCuenta) || "Cuenta no disponible" : "Sin asignar";
               const DestIcono = m.tipo === "ingreso" ? ArrowDownLeft : m.tipo === "transferencia" ? ArrowRightLeft : ArrowUpRight;
               const nombreMovimiento = m.destinatario || (m.tipo === "ingreso" ? "Ingreso" : m.tipo === "transferencia" ? "Transferencia" : "Sin destinatario");
               return (
@@ -312,7 +332,7 @@ export default function MovimientosPanel({
         )}
         <footer className="mv-history-footer">
           <Wallet size={14} aria-hidden="true" />
-          Se muestran los movimientos recuperados de tu cuenta; la carga histórica completa tendrá paginación.
+          Historial cargado por páginas. Las operaciones sin billetera se conservan y pueden editarse.
         </footer>
       </section>
     </div>

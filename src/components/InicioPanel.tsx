@@ -24,6 +24,8 @@ export default function InicioPanel({movimientos,categorias,periodo,mes,dia,desd
   }),[movimientos,periodo,mes,dia,desde,hasta]);
   const confirmados=enPeriodo.filter(m=>m.estado==="confirmado");
   const { ingresos, gastos, inversiones, balanceDisponible: balance } = resumenFinanciero(enPeriodo);
+  // El saldo total es independiente de los filtros de fechas del resumen.
+  const balanceHistorico = useMemo(() => resumenFinanciero(movimientos).balanceDisponible, [movimientos]);
   const nombres=new Map(categorias.map(c=>[c.id,c.nombre]));
   const distribucion=useMemo(()=>{
     const suma=new Map<string,number>();
@@ -56,13 +58,18 @@ export default function InicioPanel({movimientos,categorias,periodo,mes,dia,desd
         {periodo==="mes"&&<label className="mv-field"><span>Mes</span><span className="mv-control mv-date-control"><input type="month" value={mes} onChange={e=>onMes(e.target.value)}/></span></label>}
         {periodo==="dia"&&<label className="mv-field"><span>Fecha</span><span className="mv-control mv-date-control"><input type="date" value={dia} onChange={e=>onDia(e.target.value)}/></span></label>}
         {periodo==="rango"&&<><label className="mv-field"><span>Desde</span><span className="mv-control mv-date-control"><input type="date" value={desde} onChange={e=>onDesde(e.target.value)}/></span></label><label className="mv-field"><span>Hasta</span><span className="mv-control mv-date-control"><input type="date" min={desde} value={hasta} onChange={e=>onHasta(e.target.value)}/></span></label></>}
+        <aside className="homeV2-current-balance" aria-label="Dinero total disponible">
+          <span className="homeV2-current-balance-title"><Wallet size={17}/> Dinero total disponible</span>
+          <strong className={balanceHistorico < 0 ? "homeV2-negative" : ""}>{money(balanceHistorico)}</strong>
+          <small>Todo el historial · movimientos confirmados</small>
+        </aside>
       </div>
     </section>
     <section className="homeV2-stats" aria-label="Balance">
       <article className="homeV2-stat homeV2-expenses"><span className="homeV2-stat-icon"><ArrowUpRight size={24}/></span><div><p>Gastos del período</p><strong>{money(gastos)}</strong><small>Movimientos confirmados</small></div></article>
       <article className="homeV2-stat homeV2-income"><span className="homeV2-stat-icon"><ArrowDownLeft size={24}/></span><div><p>Ingresos del período</p><strong>{money(ingresos)}</strong><small>Registrados desde la web</small></div></article>
       <article className="homeV2-stat homeV2-investments"><span className="homeV2-stat-icon"><ChartNoAxesCombined size={24}/></span><div><p>Inversiones del período</p><strong>{money(inversiones)}</strong><small>Aportes confirmados</small></div></article>
-      <article className="homeV2-stat homeV2-balance"><span className="homeV2-stat-icon"><Wallet size={24}/></span><div><p>Balance disponible</p><strong className={balance<0?"homeV2-negative":""}>{money(balance)}</strong><small>Ingresos − gastos − inversiones</small></div></article>
+      <article className="homeV2-stat homeV2-balance"><span className="homeV2-stat-icon"><Wallet size={24}/></span><div><p>Balance del período</p><strong className={balance<0?"homeV2-negative":""}>{money(balance)}</strong><small>Ingresos − gastos − inversiones</small></div></article>
     </section>
     <div className="homeV2-analysis">
       <section className="homeV2-panel">

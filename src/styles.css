@@ -829,3 +829,45 @@ select option:disabled{color:#9caeaa}
 @media(max-width:850px){.bottomNav{grid-template-columns:repeat(5,minmax(0,1fr))}}
 @media(max-width:700px){.investV1-stats{grid-template-columns:minmax(0,1fr)}.investV1-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.investV1-aside{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:600px){.homeV2-stats{grid-template-columns:minmax(0,1fr)}.investV1-toolbar{align-items:stretch}.investV1-primary{justify-content:center}.investV1-filterbox,.investV1-history,.investV1-aside>section{padding:17px}.investV1-filters{grid-template-columns:minmax(0,1fr)}.investV1-item{flex-wrap:wrap}.investV1-itemright{flex:1 1 100%;display:flex;align-items:center;justify-content:space-between;margin-left:57px}.bottomNav button{font-size:9px}.bottomNav button svg{width:19px;height:19px}.addV2-toggle button{font-size:11px;gap:5px}}
+
+/* Saldo histórico: independiente de la selección de fechas del resumen. */
+.homeV2-current-balance{
+  grid-column:3 / span 2;
+  justify-self:start;
+  align-self:end;
+  display:grid;
+  gap:5px;
+  width:min(100%,325px);
+  min-width:0;
+  padding:12px 15px;
+  border:1px solid #2a625a;
+  border-radius:12px;
+  background:linear-gradient(120deg,#0d3032,#102a30);
+}
+.homeV2-current-balance-title{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  color:#b9d9ce;
+  font-size:12px;
+  font-weight:650;
+}
+.homeV2-current-balance-title svg{flex:0 0 auto;color:#64dfbd}
+.homeV2-current-balance strong{
+  color:#6bedc7;
+  font-size:clamp(20px,2vw,26px);
+  font-weight:750;
+  letter-spacing:-.5px;
+  font-variant-numeric:tabular-nums;
+  line-height:1.15;
+  overflow-wrap:anywhere;
+}
+.homeV2-current-balance strong.homeV2-negative{color:#ff96a4}
+.homeV2-current-balance small{color:#89b6ac;font-size:10px;line-height:1.4}
+@media(max-width:1200px){
+  .homeV2-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .homeV2-current-balance{grid-column:1 / -1;justify-self:stretch;width:auto}
+}
+@media(max-width:600px){
+  .homeV2-filter-grid{grid-template-columns:minmax(0,1fr)}
+}

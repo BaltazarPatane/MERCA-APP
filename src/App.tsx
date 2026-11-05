@@ -71,10 +71,31 @@ export default function App() {
     if (!supabase || !session) return;
     setLoading(true);
     setError("");
+    const client = supabase;
+    const userId = session.user.id;
+    // La paginación evita el límite de 3.000 movimientos y el tope de filas
+    // por consulta de Supabase. Los saldos se calculan sobre todo el historial.
+    const cargarHistorialCompleto = async () => {
+      const todos: Movimiento[] = [];
+      const pagina = 1000;
+      for (let inicio = 0; ; inicio += pagina) {
+        const resultado = await client.from("movimientos")
+          .select("id,tipo,monto,moneda,fecha,hora,descripcion,destinatario,estado,categoria_id,cuenta_origen_id,cuenta_destino_id")
+          .eq("user_id", userId)
+          .order("fecha", { ascending: false })
+          .order("id", { ascending: false })
+          .range(inicio, inicio + pagina - 1);
+        if (resultado.error) return { data: null, error: resultado.error };
+        const lote = (resultado.data || []) as Movimiento[];
+        todos.push(...lote);
+        if (lote.length < pagina) break;
+      }
+      return { data: todos, error: null };
+    };
     const [mov, cat, cta] = await Promise.all([
-      supabase.from("movimientos").select("id,tipo,monto,moneda,fecha,hora,descripcion,destinatario,estado,categoria_id,cuenta_origen_id,cuenta_destino_id").order("fecha", { ascending: false }).limit(3000),
-      supabase.from("categorias").select("id,nombre,tipo,activa,color").order("nombre"),
-      supabase.from("cuentas").select("id,nombre,tipo,activa").order("nombre"),
+      cargarHistorialCompleto(),
+      client.from("categorias").select("id,nombre,tipo,activa,color").order("nombre"),
+      client.from("cuentas").select("id,nombre,tipo,activa").order("nombre"),
     ]);
     if (mov.error || cat.error) setError(mov.error?.message || cat.error?.message || "Error desconocido");
     else {

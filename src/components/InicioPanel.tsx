@@ -1,21 +1,22 @@
 import { useMemo } from "react";
 import { ArrowDownLeft, ArrowRight, ArrowUpRight, CalendarDays, ChartNoAxesCombined, CheckCircle2, ChevronDown, CirclePlus, Clock3, ListFilter, PieChart, Wallet } from "lucide-react";
-import type { Categoria, Movimiento } from "../types";
+import type { Categoria, Cuenta, Movimiento } from "../types";
+import { resumenPorCuentas } from "../lib/cuentas";
 import { resumenFinanciero } from "../lib/finanzas";
 
 type Props = {
-  movimientos: Movimiento[]; categorias: Categoria[];
+  movimientos: Movimiento[]; categorias: Categoria[]; cuentas: Cuenta[];
   periodo: string; mes: string; dia: string; desde: string; hasta: string;
   onPeriodo:(v:string)=>void; onMes:(v:string)=>void; onDia:(v:string)=>void;
   onDesde:(v:string)=>void; onHasta:(v:string)=>void;
-  onHistorial:(pendientes?:boolean)=>void; onAgregar:()=>void;
+  onHistorial:(pendientes?:boolean)=>void; onAgregar:()=>void; onCuentas:()=>void;
 };
 const money=(n:number)=>new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(n);
 const colores=["#32e4b7","#31b9d6","#5c9df3","#b286ec","#ffbb54","#819ba4","#e97b9b","#46c6a5"];
 const fecha=(v:string)=>{const [a,m,d]=v.split("-");return d+"/"+m+"/"+a;};
 const origen=(m:Movimiento)=>m.descripcion === "Comprobante recibido por Atajos" ? "Atajos" : (m.descripcion?.trim() || (m.tipo === "ingreso" ? "Ingreso manual" : "Gasto manual"));
 
-export default function InicioPanel({movimientos,categorias,periodo,mes,dia,desde,hasta,onPeriodo,onMes,onDia,onDesde,onHasta,onHistorial,onAgregar}:Props){
+export default function InicioPanel({movimientos,categorias,cuentas,periodo,mes,dia,desde,hasta,onPeriodo,onMes,onDia,onDesde,onHasta,onHistorial,onAgregar,onCuentas}:Props){
   const enPeriodo=useMemo(()=>movimientos.filter(m=>{
     if(periodo==="mes"&&!m.fecha.startsWith(mes))return false;
     if(periodo==="dia"&&m.fecha!==dia)return false;
@@ -24,8 +25,9 @@ export default function InicioPanel({movimientos,categorias,periodo,mes,dia,desd
   }),[movimientos,periodo,mes,dia,desde,hasta]);
   const confirmados=enPeriodo.filter(m=>m.estado==="confirmado");
   const { ingresos, gastos, inversiones, balanceDisponible: balance } = resumenFinanciero(enPeriodo);
-  // El saldo total es independiente de los filtros de fechas del resumen.
-  const balanceHistorico = useMemo(() => resumenFinanciero(movimientos).balanceDisponible, [movimientos]);
+  // El saldo total suma los saldos de apertura y todos los movimientos confirmados.
+  const saldos = useMemo(() => resumenPorCuentas(cuentas, movimientos), [cuentas, movimientos]);
+  const balanceHistorico = saldos.saldoTotal;
   const nombres=new Map(categorias.map(c=>[c.id,c.nombre]));
   const distribucion=useMemo(()=>{
     const suma=new Map<string,number>();
@@ -61,8 +63,22 @@ export default function InicioPanel({movimientos,categorias,periodo,mes,dia,desd
         <aside className="homeV2-current-balance" aria-label="Dinero total disponible">
           <span className="homeV2-current-balance-title"><Wallet size={17}/> Dinero total disponible</span>
           <strong className={balanceHistorico < 0 ? "homeV2-negative" : ""}>{money(balanceHistorico)}</strong>
-          <small>Todo el historial · movimientos confirmados</small>
+          <small>Saldo de apertura + historial confirmado</small>
         </aside>
+      </div>
+      <div className="homeV2-wallets">
+        <div className="homeV2-wallets-head"><strong>Dinero por billetera</strong><button type="button" onClick={onCuentas}>Administrar billeteras <ArrowRight size={15}/></button></div>
+        <div className="homeV2-wallet-list">
+          {saldos.detalle.map(c => <div key={c.id} className="homeV2-wallet-item">
+            <span>{c.nombre}{!c.activa ? " (inactiva)" : ""}</span>
+            <strong className={c.saldo < 0 ? "homeV2-negative" : ""}>{money(c.saldo)}</strong>
+          </div>)}
+          {(saldos.movimientosSinAsignar > 0 || !cuentas.length) && <div className="homeV2-wallet-item homeV2-wallet-unassigned">
+            <span>Sin billetera asignada</span>
+            <strong className={saldos.saldoSinAsignar < 0 ? "homeV2-negative" : ""}>{money(saldos.saldoSinAsignar)}</strong>
+          </div>}
+        </div>
+        {saldos.movimientosSinAsignar > 0 && <small>{saldos.movimientosSinAsignar} movimientos confirmados sin billetera; podés asignarlos desde el historial.</small>}
       </div>
     </section>
     <section className="homeV2-stats" aria-label="Balance">

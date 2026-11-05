@@ -40,7 +40,7 @@ function pdfMercadoPago({ cuil = CUIL, origen = "Mercado Pago", destino = "Merca
   ].join("\n");
 }
 
-function dbSimulada(cuentas = []) {
+function dbSimulada(cuentas = [], existente = null) {
   const movimientos = [];
   const categoria = {id: "cat-ejemplo", activa: true};
   const db = {
@@ -52,7 +52,7 @@ function dbSimulada(cuentas = []) {
         eq(campo, valor) {filtros.push([campo,valor]);return this;},
         async maybeSingle() {
           if (tabla !== "movimientos") throw new Error("Query inesperada");
-          return { data: null, error: null };
+          return { data: existente, error: null };
         },
         async single() {
           if (tabla !== "categorias") throw new Error("Query inesperada");
@@ -76,8 +76,8 @@ function dbSimulada(cuentas = []) {
 }
 
 function servidor({ cuentas = [], cuils = {[USUARIO]: CUIL}, token = TOKEN,
-                    extras = {} } = {}) {
-  const base = dbSimulada(cuentas);
+                    extras = {}, existente = null } = {}) {
+  const base = dbSimulada(cuentas, existente);
   const env = {
     MERCA_INGEST_USERS: JSON.stringify({[USUARIO]: TOKEN,[AMIGO]: TOKEN_AMIGO}),
     MERCA_CUILS_POR_USUARIO: cuils === null ? undefined : JSON.stringify(cuils),
@@ -192,6 +192,15 @@ test("el token de otro usuario no autoriza vincular una cuenta propia", async ()
   assert.equal(resultado.status,200);
   assert.equal(s.base.movimientos[0].user_id,AMIGO);
   assert.equal(s.base.movimientos[0].cuenta_origen_id,undefined);
+});
+
+test("un comprobante repetido no reemplaza billeteras manuales ni agrega movimientos", async () => {
+  const actual = {id:"mov-previo", estado:"confirmado",destinatario:"Tienda Prueba",
+                  cuenta_origen_id:"elegida-manualmente"};
+  const s=servidor({cuentas:[cuenta("mp")],existente:actual});
+  assert.equal((await s.enviar(pdfMercadoPago())).status,200);
+  assert.equal(s.base.movimientos.length,0);
+  assert.equal(actual.cuenta_origen_id,"elegida-manualmente");
 });
 
 test("errores o ausencias de billetera no impiden registrar el gasto existente", async () => {

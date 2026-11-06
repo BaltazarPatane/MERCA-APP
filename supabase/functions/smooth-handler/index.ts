@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 /*
-MERCA · receptor de comprobantes · v13
+MERCA · receptor de comprobantes · v13.1 (Brubank)
 Receptor multiusuario + asociación automática de la billetera de origen.
 
 - Mantener la URL, el token y el JSON del Atajo existente.
@@ -106,7 +106,22 @@ function buscarFechas(texto: string): string[] {
   return [...resultado].slice(0, 15);
 }
 
+// La captura de Brubank trae todos los datos en un recibo de imagen.
+// Solo usar un identificador de transacción Brubank si el formato es inequívoco.
+function esFormatoBrubank(texto: string): boolean {
+  const cuerpo = textoOperacion(texto);
+  return /\bbru\s*bank\b/i.test(cuerpo) &&
+    /\boperaci[oó]n\b/i.test(cuerpo) &&
+    /\bfecha\b/i.test(cuerpo) &&
+    /\bmonto\b/i.test(cuerpo) &&
+    /\bn[uú]mero\s+de\s+transacci[oó]n\b/i.test(cuerpo);
+}
+
 function buscarHora(texto: string): string | null {
+  if (esFormatoBrubank(texto)) {
+    const fechaHora = textoOperacion(texto).match(/\bfecha\s*:?\s*[0-3]?\d[/.-][01]?\d[/.-]20\d{2}[,\s]+([01]?\d|2[0-3]):([0-5]\d)\b/i);
+    if (fechaHora) return fechaHora[1].padStart(2, "0") + ":" + fechaHora[2];
+  }
   const encabezado = textoOperacion(texto).slice(0, 400);
   // Ejemplo real: "Domingo, 18 de octubre de 2026, 13:45 hs."
   const juntoFecha = encabezado.match(/\b20\d{2}\s*,?\s*([01]?\d|2[0-3]):([0-5]\d)\s*hs\.?/i);
@@ -116,8 +131,14 @@ function buscarHora(texto: string): string | null {
 }
 
 function buscarReferencia(texto: string): string | null {
-  const m = textoOperacion(texto).match(/\bN[.°º\s]*de\s+operaci[oó]n\s+de\s+Mercado\s+Pago\s*[:#-]?\s*(\d{6,25})/i);
-  return m ? `mercado_pago:${m[1]}` : null;
+  const cuerpo = textoOperacion(texto);
+  const mercadoPago = cuerpo.match(/\bN[.°º\s]*de\s+operaci[oó]n\s+de\s+Mercado\s+Pago\s*[:#-]?\s*(\d{6,25})/i);
+  if (mercadoPago) return "mercado_pago:" + mercadoPago[1];
+  if (esFormatoBrubank(cuerpo)) {
+    const brubank = cuerpo.match(/\bn[uú]mero\s+de\s+transacci[oó]n\s*[:#-]?\s*(\d{6,25})\b/i);
+    if (brubank) return "brubank:" + brubank[1];
+  }
+  return null;
 }
 
 // Priorizar nombres visibles. Si no figura el nombre del titular destino,
@@ -214,7 +235,20 @@ function buscarIdentificadorDeDestino(texto: string): string | null {
   return null;
 }
 
+// En el recibo de Brubank «Operación» contiene el comercio/descriptor.
+function buscarComercioBrubank(texto: string): string | null {
+  if (!esFormatoBrubank(texto)) return null;
+  const m = textoOperacion(texto).match(/\boperaci[oó]n\b[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?([^\r\n]+)/i);
+  if (!m) return null;
+  const comercio = m[1]
+    .split(/\s+(?=fecha\b|monto\b|n[uú]mero\s+de\s+transacci[oó]n\b)/i)[0].trim();
+  if (/^(?:fecha|monto|detalle|brubank|n[uú]mero)\b/i.test(comercio)) return null;
+  return nombreDestinatarioValido(comercio);
+}
+
 export function buscarDestinatario(texto: string): string | null {
+  const comercioBrubank = buscarComercioBrubank(texto);
+  if (comercioBrubank) return comercioBrubank;
   const cuerpo = textoOperacion(texto);
   const seccion = cuerpo.match(/origen\s+y\s+destino\s*([\s\S]*?)(?=\bN[.°º\s]*de\s+operaci[oó]n\b|$)/i)?.[1];
   const bloque = seccion || cuerpo;
@@ -497,7 +531,12 @@ Deno.serve(async (req: Request) => {
   if (datos.simular === true || typeof texto_ocr !== "string" || !texto_ocr.trim() ||
       texto_ocr.length > cantidadMaximaOCR || typeof categoria !== "string" ||
       !categoria.trim() || categoria.length > 80) {
-    console.warn("MERCA_VALIDACION", "CUERPO_JSON_INVALIDO");
+    const motivo = datos.simular === true ? "SIMULACION" :
+      typeof texto_ocr !== "string" ? "OCR_NO_ES_TEXTO" :
+      !texto_ocr.trim() ? "OCR_VACIO" :
+      texto_ocr.length > cantidadMaximaOCR ? "OCR_EXCESIVO" :
+      typeof categoria !== "string" || !categoria.trim() || categoria.length > 80 ? "CATEGORIA_INVALIDA" : "JSON_INVALIDO";
+    console.warn("MERCA_VALIDACION", "CUERPO_JSON_INVALIDO", motivo);
     return responder("error", 422);
   }
 
